@@ -10,6 +10,8 @@ from random import shuffle
 from functools import partial
 from collections import OrderedDict, defaultdict
 from itertools import izip
+from tqdm import tqdm
+import logging
 
 __author__ = "kurtosis"
 
@@ -50,7 +52,7 @@ class Anga(object):
         self.r_bitmap = BitMap.fromstring(self.r)
         self.nonzero = set([(self.r_bitmap.size() - 1 - index) for index in self.r_bitmap.nonzero()])
         self.strengths = self._compute_strengths()
-        
+
         if r_volume is None:
             self.r_volume = {pos: 0.7 for pos in self.nonzero}
             #self.r_volume = {(self.r_bitmap.size() - 1 - index): 0.7 for index in self.r_bitmap.nonzero()}
@@ -133,15 +135,29 @@ class Avartam(object):
         pass
 
 
+def if_logger(func):
+    def func_wrapper(self, msg):
+        if self.log is not None:
+            return func(self, msg)
+    return func_wrapper
+
+
 class Linear(object):
 
-    def __init__(self, variability=0.1, density=0.5, serendipity=0.5, irregularity=0.8, 
+    def __init__(self, variability=0.1, density=0.5, irregularity=0.8,
                  possible_volume_bounds=(0.3, 1.),
                  volume_serendipity=0.5, volume_serendipity_tolerance=0.3,
                  mean_volume=None, mean_volume_tolerance=0.1,
                  start='0100100100010010',
                  angas_per_avartam = 4,
-                 tracks=1):
+                 tracks=1,
+                 log=None, log_level='debug'):
+        self.logger=None
+        self.log = log
+        if self.log is not None:
+            print "Log must be non-empty"
+            self.logger = self._configure_logger(log_level)
+
         self.start = start
         self.current_anga = Anga(self.start)
         self.angas_per_avartam = angas_per_avartam
@@ -155,16 +171,61 @@ class Linear(object):
         self.density = density
         self.volume_tuner = VolumeTuner(self.current_anga,
                                         mean_volume=mean_volume, mean_volume_tolerance=mean_volume_tolerance,
-                                       serendipity=volume_serendipity,
-                                       serendipity_tolerance=volume_serendipity_tolerance,
-                                       possible_volume_bounds=possible_volume_bounds)
+                                        serendipity=volume_serendipity,
+                                        serendipity_tolerance=volume_serendipity_tolerance,
+                                        possible_volume_bounds=possible_volume_bounds,
+                                        log = self.log, logger=self.logger)
 
-        #self.serendipity_alpha_shape = serendipity * self.effective_size    # for serendipity
-        #self.serendipity_beta_shape = self.effective_size - self.serendipity_alpha_shape
-        #self.serendipity = serendipity
         print "poisson lambda for variability: ", self.poisson_lambda
         print "alpha and beta shapes in beta distribution for density: ", self.alpha_shape, self.beta_shape
-        
+
+        self.irregularity = irregularity
+        self.sorted_irrs = None
+
+    @if_logger
+    def log_debug(self, msg):
+        return self.logger.debug(msg)
+
+    @if_logger
+    def log_info(self, msg):
+        return self.logger.info(msg)
+
+    @if_logger
+    def log_warning(self, msg):
+        return self.logger.warning(msg)
+
+    @if_logger
+    def log_error(self, msg):
+        return self.logger.error(msg)
+
+    def _configure_logger(self, log_level='debug'):
+        LOGGER_FORMAT = "%(asctime)s,%(msecs)03d %(levelname)-8s [%(name)s/%(module)s:%(lineno)d]: %(message)s"
+        LOGGER_DATEFMT = "%Y-%m-%d %H:%M:%S"
+        LOGFILE = self.log
+
+        if log_level == 'debug':
+            lvl = logging.DEBUG
+        elif log_level == 'info':
+            lvl = logging.INFO
+        elif log_level == 'warning':
+            lvl = logging.WARNING
+        elif log_level == 'error':
+            lvl = logging.ERROR
+        else:
+            raise ValueError("Log level must be of these: 'debug', 'info', 'warning', 'error'")
+        print lvl
+        logging.basicConfig(format=LOGGER_FORMAT,
+                            datefmt=LOGGER_DATEFMT,
+                            level=lvl)
+        formatter = logging.Formatter(LOGGER_FORMAT, datefmt=LOGGER_DATEFMT)
+
+        file_handler = logging.FileHandler(LOGFILE)
+        file_handler.setFormatter(formatter)
+
+        logger = logging.getLogger()
+        logger.setLevel(lvl)
+        logger.addHandler(file_handler)
+        return logger
 
     def _convert_variability(self, variability):
         return len(self.start) * variability
@@ -180,7 +241,7 @@ class Linear(object):
         pos_plus, dist_plus = None, None
         for minus in xrange(pos-1, -1, -1):
             if rhythm_bitmap.test(rhythm_bitmap.size() - 1 - minus):
-                print 'oops minus'
+                #print 'oops minus'
                 break
             #print strength_i, strengths[minus]
             if strengths[pos] < strengths[minus]:
@@ -189,7 +250,7 @@ class Linear(object):
                 break
         for plus in xrange(pos+1, rhythm_bitmap.size()):
             if rhythm_bitmap.test(rhythm_bitmap.size() - 1 - plus):
-                print 'oops plus'
+                #print 'oops plus'
                 break
             if strengths[pos] < strengths[plus]:
                 pos_plus = plus
@@ -204,7 +265,7 @@ class Linear(object):
         if pos_minus is None:
             attraction_minus = -1
         else:
-            attraction_minus = strengths[pos_minus] * 0.5 / dist_minus  
+            attraction_minus = strengths[pos_minus] * 0.5 / dist_minus
         if pos_plus is None:
             attraction_plus = -1
         else:
@@ -223,15 +284,20 @@ class Linear(object):
             irregularity = max(irr(pos_minus, attraction_minus),
                               irr(pos_plus, attraction_plus))
         return irregularity
-    
-    
-    def irregularity_factor(self, rhythm_bitmap):
-        # TODO
 
-        return 1
+    def rhythm_irregularity(self, rhythm_bitmap):
+        irr = 1
+        for pos in xrange(rhythm_bitmap.size()):
+            irr += self.note_irregularity(rhythm_bitmap, pos)
+        irr *= (len(rhythm_bitmap.nonzero())**0.4/rhythm_bitmap.size()**2)
+        return irr
+
+    def irregularity_factor(self, rhythm_bitmap):
+        normalized_rank = self.sorted_irrs.keys().index(rhythm_bitmap) * 1. / len(self.sorted_irrs)
+        proba = sp.stats.norm.pdf(normalized_rank, self.irregularity, 0.08)
+        return proba
 
     def density_factor(self, rhythm_bitmap):
-        #rhythm_bitmap = BitMap.fromstring(rhythm)
         rhythm_density = len(rhythm_bitmap.nonzero()) * 1. / rhythm_bitmap.size()
         proba = stats.beta.pdf(rhythm_density, self.alpha_shape, self.beta_shape)
         return proba
@@ -247,25 +313,36 @@ class Linear(object):
                  in the next step of random walk. The probability factorizes over several parameters
                  (i.e. is just a product of distributions)
         """
-        return (self.irregularity_factor(rhythm_bitmap)
-                * self.density_factor(rhythm_bitmap)
-                * self.serendipity_factor(rhythm_bitmap))
+        proba = (self.irregularity_factor(rhythm_bitmap)
+                 * self.density_factor(rhythm_bitmap)
+                 * self.serendipity_factor(rhythm_bitmap))
+        self.log_debug("%s\t%s\t%s\t%s\t%s" % (rhythm_bitmap.tostring(),
+                                           self.irregularity_factor(rhythm_bitmap),
+                                           self.density_factor(rhythm_bitmap),
+                                           self.serendipity_factor(rhythm_bitmap),
+                                           proba))
+        return proba
+
+    def _rank_by_irregularity(self, adjacent):
+        irrs = {rhythm_bitmap: self.rhythm_irregularity(rhythm_bitmap) for rhythm_bitmap in adjacent}
+        sorted_irrs = OrderedDict(sorted(irrs.items(), key=lambda x: x[1]))
+        return sorted_irrs
 
     def make_elementary_step(self):
-        print "making elementary step"
+        self.log_warning("making elementary step")
         adjacent = list(self.current_anga.find_adjacent())
-        adj_probas = []
-        for rhythm in adjacent:
-            adj_probas.append(self.sampling_probability(rhythm))
-        adj_probas = np.array(adj_probas) / sum(adj_probas)
+        self.sorted_irrs = self._rank_by_irregularity(adjacent)
+        self.log_debug("\nsorted irregularities:")
+        for item in self.sorted_irrs.items():
+            self.log_debug("%s\t%s" % (item[0].tostring(), item[1]))
 
-        # debug
-        #for i, rhythm in enumerate(adjacent):
-        #    print rhythm, adj_probas[i]
+        adj_probas = []
+        for rhythm_bitmap in adjacent:
+            adj_probas.append(self.sampling_probability(rhythm_bitmap))
+        adj_probas = np.array(adj_probas) / sum(adj_probas)
 
         choice = np.random.multinomial(1, adj_probas, size=1)
         choice_index = choice.nonzero()[1]
-        print adjacent[choice_index].tostring(), adj_probas[choice_index]
         self.current_anga = Anga(adjacent[choice_index].tostring(), r_volume=self.current_anga.r_volume)
 
     def construct_avartam(self):
@@ -277,13 +354,13 @@ class Linear(object):
         :return: new avartam
         """
         random_walk_length = self.generate_walk_length()
-        print "random_walk_length: ", random_walk_length
+        self.log_info("random_walk_length: %s" % random_walk_length)
         for i in xrange(random_walk_length):
             self.make_elementary_step()
 
-        print "i am in the make_variation..."
+        self.log_info("volume tuning ...")
         self.volume_tuner.current_anga = self.current_anga # TODO: make it nicer
-        print self.volume_tuner.current_anga.r, self.volume_tuner.current_anga.r_volume
+        #self.log_debug(self.volume_tuner.current_anga.r, self.volume_tuner.current_anga.r_volume
         self.volume_tuner.tune_volume_batch()
         self.current_anga = self.volume_tuner.current_anga
         self.construct_avartam()
@@ -293,15 +370,16 @@ class VolumeTuner(object):
 
     def __init__(self, initial_anga, possible_volume_bounds=(0.3, 1.),
                  serendipity=0.5, serendipity_tolerance=0.3,
-                 mean_volume=None, mean_volume_tolerance=0.1):
+                 mean_volume=None, mean_volume_tolerance=0.1,
+                 logger=None, log=None):
         """
         Here should be arguments that make sense whatever the handles you are going to use. 
         """
+        self.log=log
+        self.logger = logger
         self.current_anga = initial_anga
         self.effective_size=10
         self.possible_volume_bounds = possible_volume_bounds
-        #self.serendipity_alpha_shape = serendipity * self.effective_size
-        #self.serendipity_beta_shape = self.effective_size - self.serendipity_alpha_shape
         self.serendipity = serendipity
         self.serendipity_tolerance=serendipity_tolerance
         if mean_volume is None:
@@ -313,15 +391,29 @@ class VolumeTuner(object):
             max(self.mean_volume*(1-self.mean_volume_tolerance), self.possible_volume_bounds[0]),
             min(self.mean_volume*(1+self.mean_volume_tolerance), self.possible_volume_bounds[1])
                              )
-        print "volume window for modifying volume: ", self.volume_window
+        self.log_info("volume window for modifying volume: %s, %s" % self.volume_window)
         self.mean_npvi, self.std_npvi = self.simulate_npvi_distribution()
 
+    @if_logger
+    def log_debug(self, msg):
+        return self.logger.debug(msg)
+
+    @if_logger
+    def log_info(self, msg):
+        return self.logger.info(msg)
+
+    @if_logger
+    def log_warning(self, msg):
+        return self.logger.warning(msg)
+
+    @if_logger
+    def log_error(self, msg):
+        return self.logger.error(msg)
 
     def volume_irregularity_factor(self, rhythm_volume_map, rhythm_length):
         # TODO
         return 1
 
-    #@staticmethod
     def npvi(self, intervals, weights=None):
         if weights is None:
             weights = [1. for i in intervals]
@@ -343,16 +435,15 @@ class VolumeTuner(object):
         volume_weights = [j[0]-i[0] for i,j in ordered_volume_pairs]  # pulse intervals between the notes
         volume_weights.append(ordered_volume[0][0] - ordered_volume[-1][0] + self.current_anga.r_bitmap.size())
         volume_npvi = self.npvi(volume_values, volume_weights)
-        #print 'npvi:', volume_npvi
         return volume_npvi
 
     def simulate_npvi_distribution(self):
         npvis = []
         means = []
-        print self.current_anga.notes_to_update_in_maps
-        for i in tqdm(xrange(10000)):
+        self.log_info("notes to update in volume map: %s" % self.current_anga.notes_to_update_in_maps)
+        for _ in tqdm(xrange(10000)):
             new_volume = deepcopy(self.current_anga.r_volume)
-            for key in self.current_anga.notes_to_update_in_maps: #new_volume:
+            for key in self.current_anga.notes_to_update_in_maps:
                 new_volume[key] = np.random.uniform(0.3, 1)
             mean = np.mean(new_volume.values())
             if mean >= self.volume_window[0] and mean <= self.volume_window[1]:
@@ -362,8 +453,8 @@ class VolumeTuner(object):
 
         mean_npvi = np.percentile(npvis, self.serendipity*100)
         std_npvi = self.serendipity_tolerance*(np.percentile(npvis, 75) - np.percentile(npvis, 25))
-        print "mean npvi as it computed from simulations (%d percentile) is %.3f" % (self.serendipity*100, mean_npvi)
-        print "standard deviation of normal distribution for npvi as interquartile range: %.3f" % std_npvi
+        self.log_info("mean npvi as it computed from simulations (%d percentile) is %.3f" % (self.serendipity*100, mean_npvi))
+        self.log_info("standard deviation of normal distribution for npvi as interquartile range: %.3f" % std_npvi)
         return mean_npvi, std_npvi
     
     def volume_serendipity_factor(self, rhythm_volume_map):
@@ -373,27 +464,21 @@ class VolumeTuner(object):
         current_npvi = self.volume_npvi(rhythm_volume_map)
         return stats.norm.pdf(current_npvi, self.mean_npvi, self.std_npvi)
 
-    def goodness_volume_function(self, update_values, update_indices): #update_value, update_index):
+    def goodness_volume_function(self, update_values, update_indices):
         """
-        :param update_index: where to update volume
-        :param update_value: how to update volume
         :return: how good is the resulting configuration
-        How good will be volume configuration if we modify the volume of a chosen single note.
+        How good will be volume configuration if we modify the volume of a chosen notes.
         This is only to be used inside tune_volume method (as an objective function).
         """
         rvm = deepcopy(self.current_anga.r_volume)
         rvm.update(dict(zip(update_indices, update_values)))
-        #print rvm, self.volume_serendipity_factor(rvm)
         return -(self.volume_serendipity_factor(rvm)
                  * self.volume_irregularity_factor(rvm, self.current_anga.r_bitmap.size()))
 
     def tune_volume(self):
         """
-        After obtaining the next variation via markov process, you need to make spiffier and groovier accents.
-        This method optimizes the volumes given the notes in already assembled anga.
-        :return: greedily optimized volumes
+        DEPRECATED
         """
-        # TODO: make non-greedy batch optimization (via scipy.minimize)
         stroke_order = list(self.current_anga.notes_to_update_in_maps)
         shuffle(stroke_order)
         print "initial volumes: ", self.current_anga.r_volume
@@ -412,6 +497,10 @@ class VolumeTuner(object):
             print "final volumes: ", self.current_anga.r_volume
 
     def tune_volume_batch(self):
+        """
+         After obtaining the next variation via markov process, you need to make spiffier and groovier accents.
+         This method optimizes the volumes given the notes in already assembled anga.
+         """
         self.mean_npvi, self.std_npvi = self.simulate_npvi_distribution()
         update_indices = list(self.current_anga.notes_to_update_in_maps)
         print update_indices
@@ -430,9 +519,9 @@ class VolumeTuner(object):
             solution['x'][i] = min(1, res)
         print solution['x']
         optimal_volumes = dict(zip(update_indices, solution['x']))
-        print "Optimal volumes: ", optimal_volumes
+        self.log_info("optimal volumes: %s" % optimal_volumes)
         self.current_anga.r_volume.update(optimal_volumes)
-        print "debug: optimal npvi: ", self.volume_npvi(self.current_anga.r_volume)
+        self.log_debug("optimal npvi: %s" % self.volume_npvi(self.current_anga.r_volume))
         return optimal_volumes
 
     
