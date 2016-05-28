@@ -4,14 +4,17 @@ from copy import deepcopy
 import numpy as np
 import scipy as sp
 from scipy import stats
-from scipy.optimize import minimize_scalar, basinhopping
 from scipy.optimize import *
 from random import shuffle
 from functools import partial
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, Counter
 from itertools import izip
 from tqdm import tqdm
 import logging
+import midi
+from midiutil.MidiFile import MIDIFile
+
+
 
 __author__ = "kurtosis"
 
@@ -51,6 +54,7 @@ class Anga(object):
         self.r = r
         self.r_bitmap = BitMap.fromstring(self.r)
         self.nonzero = set([(self.r_bitmap.size() - 1 - index) for index in self.r_bitmap.nonzero()])
+        print "nonzero: ", self.nonzero
         self.strengths = self._compute_strengths()
 
         if r_volume is None:
@@ -63,6 +67,8 @@ class Anga(object):
         self.notes_to_delete_from_maps = set(self.r_volume.keys()).difference(self.nonzero)
         for pos in self.notes_to_delete_from_maps:
             del self.r_volume[pos]
+
+        print "r_volume: ", self.r_volume
 
     def _compute_strengths(self): #length=16):
         length = self.r_bitmap.size()
@@ -86,24 +92,18 @@ class Anga(object):
         res.flip(res.size()-1 - pos)
         return res
 
-    def _shift_note(self, pos, dir='right'):
+    def _shift_note(self, pos, dir='right', step=1):
         res = deepcopy(self.r_bitmap)
         if dir == 'right':
-            if pos == res.size()-1:
-                res.set(res.size()-1)
-            else:
-                res.set(res.size() - 1 - (pos + 1))
+            res.set((res.size() - 1 - (pos + step)) % res.size())
         elif dir == 'left':
-            if pos == 0:
-                res.set(0)
-            else:
-                res.set(res.size() - 1 - (pos - 1))
+            res.set((res.size() - 1 - (pos - step)) % res.size())
         else:
             raise ValueError("direction parameter should take value either 'right' or 'left'")
         res.reset(res.size() - 1 - pos)
         return res
 
-    def find_adjacent(self):
+    def find_adjacent(self, admissible_steps=(1,)):
         flipped = []
         for pos in xrange(self.r_bitmap.size()):
             flipped.append(self._flip_note(pos))
@@ -113,9 +113,10 @@ class Anga(object):
 
         shifted = []
         nonzero = [self.r_bitmap.size()-1 - reverse_pos for reverse_pos in self.r_bitmap.nonzero()]
-        for pos in nonzero:
-            shifted.append(self._shift_note(pos, 'right'))
-            shifted.append(self._shift_note(pos, 'left'))
+        for step in admissible_steps:
+            for pos in nonzero:
+                shifted.append(self._shift_note(pos, dir='right', step=step))
+                shifted.append(self._shift_note(pos, dir='left', step=step))
         print len(shifted),
         shifted = set(shifted)
         print len(shifted)
@@ -129,9 +130,24 @@ class Avartam(object):
 
     def __init__(self, *angas):
         self.r = ''.join(anga.r for anga in angas)
-        self.r_volumes = [anga.r_volume for anga in angas]
+        self.r_volume = self._init_volumes(*angas)
+
+    def _init_volumes(self, *angas):
+        avartam_volume = deepcopy(angas[0].r_volume)
+        if len(angas) > 1:
+            base = len(angas[0].r)
+            for anga in angas[1:]:
+                avartam_volume.update({k+base:v for k,v in anga.r_volume.items()})
+                base += len(anga.r)
+        return avartam_volume
 
     def add_tihai(self):
+        pass
+
+    def add_khali(self):
+        pass
+
+    def add_sam(self):
         pass
 
 
@@ -165,7 +181,7 @@ class Linear(object):
 
         self.poisson_lambda = self._convert_variability(variability)        # for variability
 
-        self.effective_size = 10                                            # for density
+        self.effective_size = 50                                            # for density
         self.alpha_shape = density * self.effective_size
         self.beta_shape = self.effective_size - self.alpha_shape
         self.density = density
@@ -302,9 +318,9 @@ class Linear(object):
         proba = stats.beta.pdf(rhythm_density, self.alpha_shape, self.beta_shape)
         return proba
 
-    def serendipity_factor(self, rhythm_bitmap):
-        # TODO
-        return 1
+    #def serendipity_factor(self, rhythm_bitmap):
+    #    # TODO
+    #    return 1
 
     def sampling_probability(self, rhythm_bitmap):
         """
@@ -314,12 +330,10 @@ class Linear(object):
                  (i.e. is just a product of distributions)
         """
         proba = (self.irregularity_factor(rhythm_bitmap)
-                 * self.density_factor(rhythm_bitmap)
-                 * self.serendipity_factor(rhythm_bitmap))
-        self.log_debug("%s\t%s\t%s\t%s\t%s" % (rhythm_bitmap.tostring(),
+                 * self.density_factor(rhythm_bitmap))
+        self.log_debug("%s\t%s\t%s\t%s" % (rhythm_bitmap.tostring(),
                                            self.irregularity_factor(rhythm_bitmap),
                                            self.density_factor(rhythm_bitmap),
-                                           self.serendipity_factor(rhythm_bitmap),
                                            proba))
         return proba
 
@@ -363,7 +377,7 @@ class Linear(object):
         #self.log_debug(self.volume_tuner.current_anga.r, self.volume_tuner.current_anga.r_volume
         self.volume_tuner.tune_volume_batch()
         self.current_anga = self.volume_tuner.current_anga
-        self.construct_avartam()
+        return self.construct_avartam()
 
 
 class VolumeTuner(object):
@@ -450,7 +464,7 @@ class VolumeTuner(object):
                 npvi = self.volume_npvi(new_volume)
                 npvis.append(npvi)
                 means.append(mean)
-
+        print "len(npvis)=%s" % len(npvis)
         mean_npvi = np.percentile(npvis, self.serendipity*100)
         std_npvi = self.serendipity_tolerance*(np.percentile(npvis, 75) - np.percentile(npvis, 25))
         self.log_info("mean npvi as it computed from simulations (%d percentile) is %.3f" % (self.serendipity*100, mean_npvi))
@@ -565,8 +579,80 @@ class MultilinearClave(Multilinear):
 
 
 class MidiParser(object):
-    pass
+
+    def __init__(self, jati=4, nadai=4, ticks_per_nadai=24):
+        self.jati = jati
+        self.nadai = nadai
+        self.ticks_per_nadai = ticks_per_nadai
+
+    def reset_meter(self, jati=4, nadai=4, ticks_per_nadai=24):
+        self.jati = jati
+        self.nadai = nadai
+        self.ticks_per_nadai = ticks_per_nadai
+
+    def _construct_template(self, angas=1):
+        return BitMap.fromstring('0' * self.nadai * self.jati * angas)
+
+    def load_midi_track(self, addr, track_num=0):
+        pattern = midi.read_midifile(addr)
+        track = pattern.get_track_by_number(track_num)
+        return track
+
+    def split_track_by_instruments(self, track):
+        instruments = defaultdict(lambda: OrderedDict())
+        for event in track:
+            if type(event) == midi.midi.NoteOnEvent:
+                instruments[event.pitch][event.tick] = {'volume': event.velocity, 'duration': None}
+        return instruments
+
+    def parse_instrument(self, track, angas=1):
+        template = self._construct_template(angas)
+
+        for onset_tick in track:
+            #print onset_tick,
+            if onset_tick % self.ticks_per_nadai != 0:
+                raise ValueError("Onset tick doesn't match nadai")
+            pos = onset_tick / self.ticks_per_nadai
+            #print pos
+            template.set(template.size() - 1 - pos)
+        template = template.tostring()
+        ticks_per_anga = len(template) / angas
+        angas = [Anga(template[i*ticks_per_anga:(i+1)*ticks_per_anga]) for i in xrange(angas)]
+        print [a.r for a in angas]
+        return angas
 
 
 class MidiWriter(object):
-    pass
+    """
+    Writing a Multilinear solo (consisting of multiple avartams) into a single MIDI track.
+    Each track (=Multilinear) corresponds to a single instrument family.
+    Each channel (=Linear) corresponds to a single instrument
+    """
+
+    def __init__(self, ticks_per_nadai, bpm, track=0, track_name="Phunkie"):
+        self.ticks_per_nadai = ticks_per_nadai
+        self.bpm = bpm
+        self.track=track
+
+        self.midi = MIDIFile(1)
+        self.midi.addTrackName(self.track, 0, track_name)
+        self.midi.addTempo(self.track, 0, self.bpm)
+
+        self.ticks_total = Counter()
+
+    def add_avartam(self, avartam, pitch, channel=2):
+        # TODO: work out duration
+        for key in avartam.r_volume:
+            print "KEY!!!", key, avartam.r_volume[key]
+            duration=1
+            time = (key * self.ticks_per_nadai + self.ticks_total[channel]) / 128.
+            #time = key
+            print "TIME!!!", time
+            self.midi.addNote(self.track, channel, pitch, time, duration, volume=avartam.r_volume[key]*127) #avartam.r_volume[key])
+
+        self.ticks_total[channel] += len(avartam.r) * self.ticks_per_nadai
+
+    def save_midi(self, addr):
+        binfile = open(addr, 'wb')
+        self.midi.writeFile(binfile)
+        binfile.close()
