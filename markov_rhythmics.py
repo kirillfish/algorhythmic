@@ -38,12 +38,14 @@ class Anga(object):
     Could be squeezed or stretched both absolutely in time
     and relatively with respect to the meter (in polyrhythms and rhythmic modulation).
     """
-    def __init__(self, r='0100100100010010', r_volume=None, jati=4, gati='chatusra'):
+    def __init__(self, r='0100100100010010', r_volume=None, jati=4, gati='chatusra',
+                 logger=None):
         """
         :param r: rhythm itself
         :param jati: "time"
         :param gati: the no. of pulses inside a single beat
         """
+        self.logger = logger
         if r is None:
             self.pulse = jati * JATI_TERMS[gati]
             self.jati = jati
@@ -54,21 +56,35 @@ class Anga(object):
         self.r = r
         self.r_bitmap = BitMap.fromstring(self.r)
         self.nonzero = set([(self.r_bitmap.size() - 1 - index) for index in self.r_bitmap.nonzero()])
-        print "nonzero: ", self.nonzero
+        self.log_debug("nonzero: %s" % self.nonzero)
         self.strengths = self._compute_strengths()
 
         if r_volume is None:
             self.r_volume = {pos: 0.7 for pos in self.nonzero}
-            #self.r_volume = {(self.r_bitmap.size() - 1 - index): 0.7 for index in self.r_bitmap.nonzero()}
         else:
             self.r_volume = r_volume
 
         self.notes_to_update_in_maps = self.nonzero.difference(set(self.r_volume.keys()))
+        print self.notes_to_update_in_maps
         self.notes_to_delete_from_maps = set(self.r_volume.keys()).difference(self.nonzero)
         for pos in self.notes_to_delete_from_maps:
             del self.r_volume[pos]
 
-        print "r_volume: ", self.r_volume
+    @if_logger
+    def log_debug(self, msg):
+        return self.logger.debug(msg)
+
+    @if_logger
+    def log_info(self, msg):
+        return self.logger.info(msg)
+
+    @if_logger
+    def log_warning(self, msg):
+        return self.logger.warning(msg)
+
+    @if_logger
+    def log_error(self, msg):
+        return self.logger.error(msg)
 
     def _compute_strengths(self): #length=16):
         length = self.r_bitmap.size()
@@ -107,9 +123,8 @@ class Anga(object):
         flipped = []
         for pos in xrange(self.r_bitmap.size()):
             flipped.append(self._flip_note(pos))
-        print len(flipped),
         flipped = set(flipped)
-        print len(flipped)
+        self.log_debug("flipped adjacent: %s" % len(flipped))
 
         shifted = []
         nonzero = [self.r_bitmap.size()-1 - reverse_pos for reverse_pos in self.r_bitmap.nonzero()]
@@ -117,12 +132,11 @@ class Anga(object):
             for pos in nonzero:
                 shifted.append(self._shift_note(pos, dir='right', step=step))
                 shifted.append(self._shift_note(pos, dir='left', step=step))
-        print len(shifted),
         shifted = set(shifted)
-        print len(shifted)
+        self.log_debug("shifted adjacent: %s" % len(shifted))
 
         adjacent = flipped.union(shifted)
-        print len(shifted) + len(flipped), len(adjacent)
+        self.log_debug("shifted+flipped and the total adjacent: %s, %s" % (len(shifted) + len(flipped), len(adjacent)))
         return adjacent
 
 
@@ -153,6 +167,13 @@ class Avartam(object):
 
 def if_logger(func):
     def func_wrapper(self, msg):
+        if self.logger is not None:
+            return func(self, msg)
+    return func_wrapper
+
+
+def if_log(func):
+    def func_wrapper(self, msg):
         if self.log is not None:
             return func(self, msg)
     return func_wrapper
@@ -166,34 +187,40 @@ class Linear(object):
                  mean_volume=None, mean_volume_tolerance=0.1,
                  start='0100100100010010',
                  angas_per_avartam = 4,
-                 tracks=1,
                  log=None, log_level='debug'):
         self.logger=None
         self.log = log
-        if self.log is not None:
+        if True: #self.log is not None:
             print "Log must be non-empty"
             self.logger = self._configure_logger(log_level)
 
         self.start = start
-        self.current_anga = Anga(self.start)
+        self.shift_steps = self._suggest_admissible_shift_steps()
+        #print self.shift_steps, "<-- SHIFT STEPS"
+
+        self.current_anga = Anga(self.start, logger=self.logger)
         self.angas_per_avartam = angas_per_avartam
         self.current_avartam = self.construct_avartam()
 
         self.poisson_lambda = self._convert_variability(variability)        # for variability
 
-        self.effective_size = 50                                            # for density
-        self.alpha_shape = density * self.effective_size
-        self.beta_shape = self.effective_size - self.alpha_shape
+        #self.effective_size = 50                                            # for density
+        #self.alpha_shape = density * self.effective_size
+        #self.beta_shape = self.effective_size - self.alpha_shape
+
+        self.triang_loc = density - 0.1
+        self.triang_scale = 0.2
+
         self.density = density
         self.volume_tuner = VolumeTuner(self.current_anga,
                                         mean_volume=mean_volume, mean_volume_tolerance=mean_volume_tolerance,
                                         serendipity=volume_serendipity,
                                         serendipity_tolerance=volume_serendipity_tolerance,
                                         possible_volume_bounds=possible_volume_bounds,
-                                        log = self.log, logger=self.logger)
+                                        logger=self.logger)
 
         print "poisson lambda for variability: ", self.poisson_lambda
-        print "alpha and beta shapes in beta distribution for density: ", self.alpha_shape, self.beta_shape
+        #print "alpha and beta shapes in beta distribution for density: ", self.alpha_shape, self.beta_shape
 
         self.irregularity = irregularity
         self.sorted_irrs = None
@@ -214,7 +241,8 @@ class Linear(object):
     def log_error(self, msg):
         return self.logger.error(msg)
 
-    def _configure_logger(self, log_level='debug'):
+    @if_log
+    def _configure_logger(self, log_level='debug', name='Linear Logger'):
         LOGGER_FORMAT = "%(asctime)s,%(msecs)03d %(levelname)-8s [%(name)s/%(module)s:%(lineno)d]: %(message)s"
         LOGGER_DATEFMT = "%Y-%m-%d %H:%M:%S"
         LOGFILE = self.log
@@ -229,7 +257,6 @@ class Linear(object):
             lvl = logging.ERROR
         else:
             raise ValueError("Log level must be of these: 'debug', 'info', 'warning', 'error'")
-        print lvl
         logging.basicConfig(format=LOGGER_FORMAT,
                             datefmt=LOGGER_DATEFMT,
                             level=lvl)
@@ -238,10 +265,13 @@ class Linear(object):
         file_handler = logging.FileHandler(LOGFILE)
         file_handler.setFormatter(formatter)
 
-        logger = logging.getLogger()
+        logger = logging.getLogger(name)
         logger.setLevel(lvl)
         logger.addHandler(file_handler)
         return logger
+
+    def _suggest_admissible_shift_steps(self):
+        return range(1, max(len(self.start) / 12, 1) + 1)
 
     def _convert_variability(self, variability):
         return len(self.start) * variability
@@ -257,16 +287,13 @@ class Linear(object):
         pos_plus, dist_plus = None, None
         for minus in xrange(pos-1, -1, -1):
             if rhythm_bitmap.test(rhythm_bitmap.size() - 1 - minus):
-                #print 'oops minus'
                 break
-            #print strength_i, strengths[minus]
             if strengths[pos] < strengths[minus]:
                 pos_minus = minus
                 dist_minus = pos - minus
                 break
         for plus in xrange(pos+1, rhythm_bitmap.size()):
             if rhythm_bitmap.test(rhythm_bitmap.size() - 1 - plus):
-                #print 'oops plus'
                 break
             if strengths[pos] < strengths[plus]:
                 pos_plus = plus
@@ -276,6 +303,7 @@ class Linear(object):
 
     def note_irregularity(self, rhythm_bitmap, pos):
         strengths = self.current_anga.strengths
+        strength_i = strengths[pos]
         pos_minus, pos_plus, dist_minus, dist_plus = self._find_resolution_pulses(rhythm_bitmap, pos)
 
         if pos_minus is None:
@@ -287,40 +315,49 @@ class Linear(object):
         else:
             attraction_plus = strengths[pos_plus] * 1. / dist_plus
         if attraction_minus == -1 and attraction_plus == -1:
+            #print pos, pos_minus, pos_plus, None, 0
             return 0
 
-        def irr(pos, attr):
-            return strengths[pos]**1.5 * 1./(strengths[pos])**3 / attr
+        def irr(pos_plusminus, attr):
+            #print 'IRR', pos, strengths[pos], attr,
+            return strengths[pos_plusminus]**1.5 * 1./(strength_i)**3 / attr
 
+        where = 'minus'
         if attraction_minus > attraction_plus:
+            #print where,
             irregularity = irr(pos_minus, attraction_minus)
+            #print 'RES: ', irregularity
         elif attraction_minus < attraction_plus:
+            where='plus'
+            #print where,
             irregularity = irr(pos_plus, attraction_plus)
+            #print 'RES: ', irregularity
         else:
             irregularity = max(irr(pos_minus, attraction_minus),
                               irr(pos_plus, attraction_plus))
+        #print pos, pos_minus, pos_plus, where, irregularity
         return irregularity
 
     def rhythm_irregularity(self, rhythm_bitmap):
         irr = 1
-        for pos in xrange(rhythm_bitmap.size()):
+        for pos in [rhythm_bitmap.size()-1-ix for ix in rhythm_bitmap.nonzero()]: #xrange(rhythm_bitmap.size()):
             irr += self.note_irregularity(rhythm_bitmap, pos)
-        irr *= (len(rhythm_bitmap.nonzero())**0.4/rhythm_bitmap.size()**2)
+        irr *= (len(rhythm_bitmap.nonzero())**0.2/rhythm_bitmap.size()**1.2) # previously: 0.4 and 2
         return irr
 
     def irregularity_factor(self, rhythm_bitmap):
         normalized_rank = self.sorted_irrs.keys().index(rhythm_bitmap) * 1. / len(self.sorted_irrs)
-        proba = sp.stats.norm.pdf(normalized_rank, self.irregularity, 0.08)
+        proba = stats.t.pdf(normalized_rank, df=1, loc=self.irregularity, scale=0.12)
         return proba
 
     def density_factor(self, rhythm_bitmap):
         rhythm_density = len(rhythm_bitmap.nonzero()) * 1. / rhythm_bitmap.size()
-        proba = stats.beta.pdf(rhythm_density, self.alpha_shape, self.beta_shape)
+        #proba = stats.beta.pdf(rhythm_density, self.alpha_shape, self.beta_shape)
+        proba = stats.triang.pdf(rhythm_density, 0.5, loc=self.triang_loc, scale=self.triang_scale)
         return proba
 
-    #def serendipity_factor(self, rhythm_bitmap):
-    #    # TODO
-    #    return 1
+    def debug_factor(self, rhythm_bitmap):
+        return float(len(rhythm_bitmap.nonzero()) > 0)
 
     def sampling_probability(self, rhythm_bitmap):
         """
@@ -330,8 +367,9 @@ class Linear(object):
                  (i.e. is just a product of distributions)
         """
         proba = (self.irregularity_factor(rhythm_bitmap)
-                 * self.density_factor(rhythm_bitmap))
-        self.log_debug("%s\t%s\t%s\t%s" % (rhythm_bitmap.tostring(),
+                 * self.density_factor(rhythm_bitmap) ** 2
+                 * self.debug_factor(rhythm_bitmap))
+        self.log_debug("%s:\tirreg:%.6f\tdens:%.6f\tsampling probability:%.4f" % (rhythm_bitmap.tostring(),
                                            self.irregularity_factor(rhythm_bitmap),
                                            self.density_factor(rhythm_bitmap),
                                            proba))
@@ -343,10 +381,10 @@ class Linear(object):
         return sorted_irrs
 
     def make_elementary_step(self):
-        self.log_warning("making elementary step")
-        adjacent = list(self.current_anga.find_adjacent())
+        self.log_info("making elementary step")
+        adjacent = list(self.current_anga.find_adjacent(admissible_steps=self.shift_steps))
         self.sorted_irrs = self._rank_by_irregularity(adjacent)
-        self.log_debug("\nsorted irregularities:")
+        self.log_debug("sorted irregularities:")
         for item in self.sorted_irrs.items():
             self.log_debug("%s\t%s" % (item[0].tostring(), item[1]))
 
@@ -357,7 +395,10 @@ class Linear(object):
 
         choice = np.random.multinomial(1, adj_probas, size=1)
         choice_index = choice.nonzero()[1]
-        self.current_anga = Anga(adjacent[choice_index].tostring(), r_volume=self.current_anga.r_volume)
+        self.current_anga = Anga(adjacent[choice_index].tostring(),
+                                 r_volume=self.current_anga.r_volume,
+                                 logger=self.logger)
+        self.log_info("the choice: %s" % self.current_anga.r)
 
     def construct_avartam(self):
         return Avartam(*([self.current_anga]*self.angas_per_avartam))
@@ -371,10 +412,10 @@ class Linear(object):
         self.log_info("random_walk_length: %s" % random_walk_length)
         for i in xrange(random_walk_length):
             self.make_elementary_step()
+        self.log_info("the final choice: %s" % self.current_anga.r)
 
         self.log_info("volume tuning ...")
         self.volume_tuner.current_anga = self.current_anga # TODO: make it nicer
-        #self.log_debug(self.volume_tuner.current_anga.r, self.volume_tuner.current_anga.r_volume
         self.volume_tuner.tune_volume_batch()
         self.current_anga = self.volume_tuner.current_anga
         return self.construct_avartam()
@@ -384,12 +425,11 @@ class VolumeTuner(object):
 
     def __init__(self, initial_anga, possible_volume_bounds=(0.3, 1.),
                  serendipity=0.5, serendipity_tolerance=0.3,
-                 mean_volume=None, mean_volume_tolerance=0.1,
-                 logger=None, log=None):
+                 mean_volume=None, mean_volume_tolerance=0.05,
+                 logger=None):
         """
         Here should be arguments that make sense whatever the handles you are going to use. 
         """
-        self.log=log
         self.logger = logger
         self.current_anga = initial_anga
         self.effective_size=10
@@ -402,8 +442,8 @@ class VolumeTuner(object):
             self.mean_volume = mean_volume
         self.mean_volume_tolerance = mean_volume_tolerance
         self.volume_window = (
-            max(self.mean_volume*(1-self.mean_volume_tolerance), self.possible_volume_bounds[0]),
-            min(self.mean_volume*(1+self.mean_volume_tolerance), self.possible_volume_bounds[1])
+            max(self.mean_volume-self.mean_volume_tolerance, self.possible_volume_bounds[0]),
+            min(self.mean_volume+self.mean_volume_tolerance, self.possible_volume_bounds[1])
                              )
         self.log_info("volume window for modifying volume: %s, %s" % self.volume_window)
         self.mean_npvi, self.std_npvi = self.simulate_npvi_distribution()
@@ -464,7 +504,7 @@ class VolumeTuner(object):
                 npvi = self.volume_npvi(new_volume)
                 npvis.append(npvi)
                 means.append(mean)
-        print "len(npvis)=%s" % len(npvis)
+        self.log_warning("len(npvis)=%s" % len(npvis))
         mean_npvi = np.percentile(npvis, self.serendipity*100)
         std_npvi = self.serendipity_tolerance*(np.percentile(npvis, 75) - np.percentile(npvis, 25))
         self.log_info("mean npvi as it computed from simulations (%d percentile) is %.3f" % (self.serendipity*100, mean_npvi))
@@ -517,24 +557,24 @@ class VolumeTuner(object):
          """
         self.mean_npvi, self.std_npvi = self.simulate_npvi_distribution()
         update_indices = list(self.current_anga.notes_to_update_in_maps)
-        print update_indices
+        self.log_debug("update_indices for volume: %s" % update_indices)
         if len(update_indices) == 0:
             return {}
         
         mybounds = MyBounds()
         objective = partial(self.goodness_volume_function, 
                             update_indices=update_indices)
+        self.log_debug("optimization with basinhopping...")
         solution = basinhopping(objective, 
                                        x0=[self.mean_volume for i in self.current_anga.notes_to_update_in_maps],
                                        niter=200, niter_success=200, accept_test=mybounds)
-        print solution
-        print solution['x']
+        self.log_info("basinhopping solution: \n%s" % solution)
         for i,res in enumerate(solution['x']):
             solution['x'][i] = min(1, res)
-        print solution['x']
         optimal_volumes = dict(zip(update_indices, solution['x']))
         self.log_info("optimal volumes: %s" % optimal_volumes)
         self.current_anga.r_volume.update(optimal_volumes)
+        self.log_info("all volumes including modified ones: %s" % self.current_anga.r_volume)
         self.log_debug("optimal npvi: %s" % self.volume_npvi(self.current_anga.r_volume))
         return optimal_volumes
 
@@ -640,17 +680,17 @@ class MidiWriter(object):
 
         self.ticks_total = Counter()
 
-    def add_avartam(self, avartam, pitch, channel=2):
+    def add_avartam(self, avartam, pitch, channel=0):
         # TODO: work out duration
         for key in avartam.r_volume:
-            print "KEY!!!", key, avartam.r_volume[key]
+            #print "KEY!!!", key, avartam.r_volume[key]
             duration=1
-            time = (key * self.ticks_per_nadai + self.ticks_total[channel]) / 128.
+            time = (key * self.ticks_per_nadai + self.ticks_total[pitch]) / 128.
             #time = key
-            print "TIME!!!", time
+            #print "TIME!!!", time
             self.midi.addNote(self.track, channel, pitch, time, duration, volume=avartam.r_volume[key]*127) #avartam.r_volume[key])
 
-        self.ticks_total[channel] += len(avartam.r) * self.ticks_per_nadai
+        self.ticks_total[pitch] += len(avartam.r) * self.ticks_per_nadai
 
     def save_midi(self, addr):
         binfile = open(addr, 'wb')
