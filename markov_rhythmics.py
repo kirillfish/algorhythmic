@@ -2,7 +2,6 @@
 from bitmap import BitMap
 from copy import deepcopy
 import numpy as np
-import scipy as sp
 from scipy import stats
 from scipy.optimize import *
 from random import shuffle
@@ -15,14 +14,30 @@ import midi
 from midiutil.MidiFile import MIDIFile
 
 
-
 __author__ = "kurtosis"
+
 
 JATI_TERMS = {'tishra':3,
               'chatusra':4,
               'khanda':5,
               'mishra':7,
               'sankeerna':9}
+
+
+def if_logger(func):
+    def func_wrapper(self, msg):
+        if self.logger is not None:
+            return func(self, msg)
+    return func_wrapper
+
+print if_logger
+
+def if_log(func):
+    def func_wrapper(self, *args, **kwargs):
+        if self.log is not None:
+            return func(self, *args, **kwargs)
+    return func_wrapper
+
 
 class Nadai():
     pass
@@ -35,7 +50,7 @@ class Akshara():
 class Anga(object):
     """
     Abstract "bar" structure for univocal track.
-    Could be squeezed or stretched both absolutely in time
+    Can be squeezed or stretched both absolutely in time
     and relatively with respect to the meter (in polyrhythms and rhythmic modulation).
     """
     def __init__(self, r='0100100100010010', r_volume=None, jati=4, gati='chatusra',
@@ -65,7 +80,7 @@ class Anga(object):
             self.r_volume = r_volume
 
         self.notes_to_update_in_maps = self.nonzero.difference(set(self.r_volume.keys()))
-        print self.notes_to_update_in_maps
+        #print self.notes_to_update_in_maps
         self.notes_to_delete_from_maps = set(self.r_volume.keys()).difference(self.nonzero)
         for pos in self.notes_to_delete_from_maps:
             del self.r_volume[pos]
@@ -86,7 +101,7 @@ class Anga(object):
     def log_error(self, msg):
         return self.logger.error(msg)
 
-    def _compute_strengths(self): #length=16):
+    def _compute_strengths(self):
         length = self.r_bitmap.size()
         accents = {i:[] for i in xrange(length)}
         for gati in xrange(2,length+1):
@@ -97,8 +112,6 @@ class Anga(object):
         max_on = max([len(on) for on in accents.values()])
         for nadai in accents:
             strengths[nadai] = 1./2**(max_on-len(accents[nadai]))
-        #print accents
-        #print strengths
         return strengths
 
     def _flip_note(self, pos):
@@ -127,7 +140,7 @@ class Anga(object):
         self.log_debug("flipped adjacent: %s" % len(flipped))
 
         shifted = []
-        nonzero = [self.r_bitmap.size()-1 - reverse_pos for reverse_pos in self.r_bitmap.nonzero()]
+        nonzero = [self.r_bitmap.size() - 1 - reverse_pos for reverse_pos in self.r_bitmap.nonzero()]
         for step in admissible_steps:
             for pos in nonzero:
                 shifted.append(self._shift_note(pos, dir='right', step=step))
@@ -164,19 +177,8 @@ class Avartam(object):
     def add_sam(self):
         pass
 
-
-def if_logger(func):
-    def func_wrapper(self, msg):
-        if self.logger is not None:
-            return func(self, msg)
-    return func_wrapper
-
-
-def if_log(func):
-    def func_wrapper(self, msg):
-        if self.log is not None:
-            return func(self, msg)
-    return func_wrapper
+    def add_random_microtiming(self):
+        pass
 
 
 class Linear(object):
@@ -187,16 +189,14 @@ class Linear(object):
                  mean_volume=None, mean_volume_tolerance=0.1,
                  start='0100100100010010',
                  angas_per_avartam = 4,
-                 log=None, log_level='debug'):
+                 log=None, log_level='debug', log_name='Linear Logger'):
         self.logger=None
         self.log = log
-        if True: #self.log is not None:
-            print "Log must be non-empty"
-            self.logger = self._configure_logger(log_level)
+        if self.log is not None:
+            self.logger = self._configure_logger(log_level, log_name)
 
         self.start = start
         self.shift_steps = self._suggest_admissible_shift_steps()
-        #print self.shift_steps, "<-- SHIFT STEPS"
 
         self.current_anga = Anga(self.start, logger=self.logger)
         self.angas_per_avartam = angas_per_avartam
@@ -204,11 +204,7 @@ class Linear(object):
 
         self.poisson_lambda = self._convert_variability(variability)        # for variability
 
-        #self.effective_size = 50                                            # for density
-        #self.alpha_shape = density * self.effective_size
-        #self.beta_shape = self.effective_size - self.alpha_shape
-
-        self.triang_loc = density - 0.1
+        self.triang_loc = density - 0.1     # for density
         self.triang_scale = 0.2
 
         self.density = density
@@ -219,8 +215,7 @@ class Linear(object):
                                         possible_volume_bounds=possible_volume_bounds,
                                         logger=self.logger)
 
-        print "poisson lambda for variability: ", self.poisson_lambda
-        #print "alpha and beta shapes in beta distribution for density: ", self.alpha_shape, self.beta_shape
+        self.log_info("poisson lambda for variability: %s" % self.poisson_lambda)
 
         self.irregularity = irregularity
         self.sorted_irrs = None
@@ -242,7 +237,7 @@ class Linear(object):
         return self.logger.error(msg)
 
     @if_log
-    def _configure_logger(self, log_level='debug', name='Linear Logger'):
+    def _configure_logger(self, log_level='debug', log_name='Linear Logger'):
         LOGGER_FORMAT = "%(asctime)s,%(msecs)03d %(levelname)-8s [%(name)s/%(module)s:%(lineno)d]: %(message)s"
         LOGGER_DATEFMT = "%Y-%m-%d %H:%M:%S"
         LOGFILE = self.log
@@ -265,7 +260,7 @@ class Linear(object):
         file_handler = logging.FileHandler(LOGFILE)
         file_handler.setFormatter(formatter)
 
-        logger = logging.getLogger(name)
+        logger = logging.getLogger(log_name)
         logger.setLevel(lvl)
         logger.addHandler(file_handler)
         return logger
@@ -315,27 +310,20 @@ class Linear(object):
         else:
             attraction_plus = strengths[pos_plus] * 1. / dist_plus
         if attraction_minus == -1 and attraction_plus == -1:
-            #print pos, pos_minus, pos_plus, None, 0
             return 0
 
         def irr(pos_plusminus, attr):
-            #print 'IRR', pos, strengths[pos], attr,
             return strengths[pos_plusminus]**1.5 * 1./(strength_i)**3 / attr
 
         where = 'minus'
         if attraction_minus > attraction_plus:
-            #print where,
             irregularity = irr(pos_minus, attraction_minus)
-            #print 'RES: ', irregularity
         elif attraction_minus < attraction_plus:
             where='plus'
-            #print where,
             irregularity = irr(pos_plus, attraction_plus)
-            #print 'RES: ', irregularity
         else:
             irregularity = max(irr(pos_minus, attraction_minus),
                               irr(pos_plus, attraction_plus))
-        #print pos, pos_minus, pos_plus, where, irregularity
         return irregularity
 
     def rhythm_irregularity(self, rhythm_bitmap):
@@ -420,6 +408,67 @@ class Linear(object):
         self.current_anga = self.volume_tuner.current_anga
         return self.construct_avartam()
 
+    def test_irregularity_common_sense(self):
+        self.log_debug("Testing irregularity function for common sense...")
+        r16 = [
+        '1001001000101000',
+        '1001001000100100',
+        '0100100100010010',
+        '0100101001010010',
+        '0101001010010100',
+        '0111001110011100',
+        '1010010101001010',
+        '0101010010101010',
+        '0101001010100101',
+        '0100000000000100',
+        '0100001010000100',
+        '1000100010001000',
+        '0010001100100011',
+        '0010001000100010',
+        '0101010101010101'
+        ]
+
+        r16_twice = [r*2 for r in r16]
+        r16_stretch = ['0'.join(r)+'0' for r in r16]
+
+        def irr(r):
+            return self.rhythm_irregularity(BitMap.fromstring(r))
+        def test_less(collection, i0, i1):
+            return collection[i0] < collection[i1]
+
+        irr16 = map(irr, r16)
+        irr16_twice = map(irr, r16_twice)
+        irr16_stretch = map(irr, r16_stretch)
+        self.log_debug("Rhythm\tIrr-as is\tIrr-taken twice\tIrr-stretch by 2")
+        for i, r in enumerate(r16):
+            self.log_debug('\t'.join([r, str(irr16[i]), str(irr16_twice[i]), str(irr16_stretch[i])]))
+
+        indices_less16 = [(0,1),
+                    (1,2),
+                    (1,3),
+                    (4,3),
+                    (5,3),
+                    (6,7),
+                    (7,8),
+                    (10,9),
+                    (10,8),
+                    (11,0),
+                    (12,9),
+                    (12,8),
+                    (13,14),
+                    (14,3)]
+        tests16 = [test_less(irr16, i0, i1) for i0, i1 in indices_less16]
+        tests16_twice = [test_less(irr16_twice, i0, i1) for i0, i1 in indices_less16]
+        tests16_stretch = [test_less(irr16_stretch, i0, i1) for i0, i1 in indices_less16]
+
+        for i, item in enumerate(indices_less16):
+            self.log_debug('%s < %s\t%s' % (r16[item[0]], r16[item[1]], tests16[i]))
+            self.log_debug('%s < %s\t%s' % (r16_twice[item[0]], r16_twice[item[1]], tests16_twice[i]))
+            self.log_debug('%s < %s\t%s' % (r16_stretch[item[0]], r16_stretch[item[1]], tests16_stretch[i]))
+
+        passed = sum(tests16) + sum(tests16_twice) + sum(tests16_stretch)
+        total = len(tests16) + len(tests16_twice) + len(tests16_stretch)
+        self.log_info("TESTS PASSED: %s/%s" % (passed, total))
 
 class VolumeTuner(object):
 
@@ -446,7 +495,7 @@ class VolumeTuner(object):
             min(self.mean_volume+self.mean_volume_tolerance, self.possible_volume_bounds[1])
                              )
         self.log_info("volume window for modifying volume: %s, %s" % self.volume_window)
-        self.mean_npvi, self.std_npvi = self.simulate_npvi_distribution()
+        #self.mean_npvi, self.std_npvi = self.simulate_npvi_distribution()
 
     @if_logger
     def log_debug(self, msg):
@@ -588,34 +637,6 @@ class MyBounds(object):
         tmax = bool(np.all(x <= self.xmax))
         tmin = bool(np.all(x >= self.xmin))
         return tmax and tmin
-            
-    
-class LinearPhunk(Linear):
-    pass
-
-
-class LinearCarnatic(Linear):
-    pass
-
-
-class LinearClave(Linear):
-    pass
-
-
-class Multilinear(Linear):
-    pass
-
-
-class MultilinearPhunk(Multilinear):
-    pass
-
-
-class MultilinearCarnatic(Multilinear):
-    pass
-
-
-class MultilinearClave(Multilinear):
-    pass
 
 
 class MidiParser(object):
@@ -683,11 +704,8 @@ class MidiWriter(object):
     def add_avartam(self, avartam, pitch, channel=0):
         # TODO: work out duration
         for key in avartam.r_volume:
-            #print "KEY!!!", key, avartam.r_volume[key]
             duration=1
             time = (key * self.ticks_per_nadai + self.ticks_total[pitch]) / 128.
-            #time = key
-            #print "TIME!!!", time
             self.midi.addNote(self.track, channel, pitch, time, duration, volume=avartam.r_volume[key]*127) #avartam.r_volume[key])
 
         self.ticks_total[pitch] += len(avartam.r) * self.ticks_per_nadai
