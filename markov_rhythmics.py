@@ -11,6 +11,10 @@ from itertools import izip
 from tqdm import tqdm
 import logging
 import midi
+
+import sys
+sys.path.insert(1, '/Users/k.rybachuk/rhythm/midiutil/src/')
+
 from midiutil.MidiFile import MIDIFile
 
 
@@ -199,6 +203,8 @@ class Linear(object):
         self.shift_steps = self._suggest_admissible_shift_steps()
 
         self.current_anga = Anga(self.start, logger=self.logger)
+        self.previous_anga = Anga(self.start, logger=self.logger)
+
         self.angas_per_avartam = angas_per_avartam
         self.current_avartam = self.construct_avartam()
 
@@ -345,7 +351,7 @@ class Linear(object):
         return proba
 
     def debug_factor(self, rhythm_bitmap):
-        return float(len(rhythm_bitmap.nonzero()) > 0)
+        return float(len(rhythm_bitmap.nonzero()) > 0) * float(rhythm_bitmap.tostring() != self.previous_anga.r)
 
     def sampling_probability(self, rhythm_bitmap):
         """
@@ -383,9 +389,12 @@ class Linear(object):
 
         choice = np.random.multinomial(1, adj_probas, size=1)
         choice_index = choice.nonzero()[1]
+
+        self.previous_anga = self.current_anga
         self.current_anga = Anga(adjacent[choice_index].tostring(),
                                  r_volume=self.current_anga.r_volume,
                                  logger=self.logger)
+        assert self.current_anga.r != self.previous_anga.r
         self.log_info("the choice: %s" % self.current_anga.r)
 
     def construct_avartam(self):
@@ -690,27 +699,37 @@ class MidiWriter(object):
     Each channel (=Linear) corresponds to a single instrument
     """
 
-    def __init__(self, ticks_per_nadai, bpm, track=0, track_name="Phunkie"):
-        self.ticks_per_nadai = ticks_per_nadai
+    def __init__(self, bpm, track=0, track_name="Phunkie"):
         self.bpm = bpm
         self.track=track
-
         self.midi = MIDIFile(1)
         self.midi.addTrackName(self.track, 0, track_name)
         self.midi.addTempo(self.track, 0, self.bpm)
-
         self.ticks_total = Counter()
 
-    def add_avartam(self, avartam, pitch, channel=0):
+    def add_avartam(self, avartam, pitch, channel=0, ticks_per_nadai=32):
         # TODO: work out duration
-        for key in avartam.r_volume:
-            duration=1
-            time = (key * self.ticks_per_nadai + self.ticks_total[pitch]) / 128.
-            self.midi.addNote(self.track, channel, pitch, time, duration, volume=avartam.r_volume[key]*127) #avartam.r_volume[key])
 
-        self.ticks_total[pitch] += len(avartam.r) * self.ticks_per_nadai
+        for key in sorted(avartam.r_volume.keys())[:-2]:
+            time = (key * ticks_per_nadai + self.ticks_total[pitch]) / 128.
+            duration = 1
+            self.midi.addNote(self.track, channel, pitch, time, duration, volume=avartam.r_volume[key]*127)
+
+        for key in sorted(avartam.r_volume.keys())[-2:]:
+            last_possible_tick = ((len(avartam.r)) * ticks_per_nadai) / 128.
+            time = (key * ticks_per_nadai + self.ticks_total[pitch]) / 128.
+            if (key+8) * ticks_per_nadai / 128. > last_possible_tick:
+                duration = last_possible_tick - (key * ticks_per_nadai-8) / 128.
+            else:
+                duration = 1
+
+            self.midi.addNote(self.track, channel, pitch, time=time, duration=duration,
+                                    volume=avartam.r_volume[key]*127)
+
+        self.ticks_total[pitch] += len(avartam.r) * ticks_per_nadai
 
     def save_midi(self, addr):
+        self.midi.close()
         binfile = open(addr, 'wb')
         self.midi.writeFile(binfile)
         binfile.close()

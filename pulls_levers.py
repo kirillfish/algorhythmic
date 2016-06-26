@@ -1,7 +1,9 @@
 #coding: utf-8
+from bitmap import BitMap
 import numpy as np
 from collections import OrderedDict, defaultdict, Counter
 from itertools import izip_longest, chain
+import re
 
 
 __author__ = "kurtosis"
@@ -46,16 +48,24 @@ def one_zero_zero_factor(linear, rhythm_bitmap, multiplier=100):
     r = rhythm_bitmap.tostring() * 2
     return multiplier if pattern in r or stretched in r else 1
 
-def one_one_one_factor(linear, rhythm_bitmap, ones=(3,4), multipliers=(20,100)):
+def one_one_one_factor(linear, rhythm_bitmap, ones=(3,4), multipliers=(40,150), negative=False):
     multipliers_dict = dict(zip(ones, multipliers))
     r = rhythm_bitmap.tostring() * 2
+    cumulative_multiplier = 0
     for num in sorted(ones, reverse=True):
-        pattern = '1' * num
-        if pattern in r:
-            return multipliers_dict[num]
-    return 1
+        pattern = re.compile('1'*num)
+        inclusion_number = len(pattern.findall(r))
+        if inclusion_number == 0:
+            continue
+        inclusion_fraction = inclusion_number * num * 1. / Counter(r)['1'] / 2
+        cumulative_multiplier += multipliers_dict[num] * inclusion_fraction
+    #print cumulative_multiplier
+    if negative:
+        return 1 if cumulative_multiplier == 0 else min(1, 1. / cumulative_multiplier)
+    else:
+        return max(1, cumulative_multiplier)
 
-def kicky_beatie_factor(linear, rhythm_bitmap, level=2, multiplier=1000):
+def kicky_beatie_factor(linear, rhythm_bitmap, level=2, multiplier=100000):
     r = rhythm_bitmap.tostring()
     kickies = map(lambda x: x[0], filter(lambda x: x[1] >= 2**-level, linear.current_anga.strengths.items()))
     all_in_place = all([r[i]=='1' for i in kickies])
@@ -73,14 +83,21 @@ def familiarity_carnatic_factor(linear, rhythm_bitmap):
 def familiarity_flamenco_factor(linear, rhythm_bitmap):
     pass
 
-def counterintuitive_shift_factor(linear, rhythm_bitmap):
+def counterintuitive_shift_factor(linear, rhythm_bitmap, gap=10, penalty=1000):
     # TODO: consider moving this into main module
     """
     One of the basic components of rhythm complexity.
+    One should be cautious with this. A rhythm may sound good if the 1st puls position is quite non-intuitive, BUT
+    the rhythm sounds really crappy when there is a shift of it that is very-very dull.
     What is called "irregularity" in markov_rhythmics.py, is really
     only one of the irregularity components -- namely, the syncopation.
     There are at least 2 other significant components:
     -- counterintuitive shift as compared to the least-syncopated shift of the same rhythmic pattern
     -- microtiming (to be done)
     """
-    pass
+    shifts = _shifted_family(rhythm_bitmap.tostring())
+    irregularity_as_is = linear.rhythm_irregularity(rhythm_bitmap)
+    min_shifted_irregularity = min([linear.rhythm_irregularity(BitMap.fromstring(r)) for r in shifts])
+    #return [linear.rhythm_irregularity(BitMap.fromstring(r)) for r in shifts], irregularity_as_is
+    # TODO include also promotion of the most irregular rhythms among all the shifts if the minimum irreg shift is not too dull.
+    return 1./penalty if irregularity_as_is > min_shifted_irregularity * gap else 1

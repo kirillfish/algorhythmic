@@ -3,7 +3,8 @@ from markov_rhythmics import Linear
 from pulls_levers import (if_euclidean_factor,
                           one_one_one_factor,
                           one_zero_zero_factor,
-                          kicky_beatie_factor)
+                          kicky_beatie_factor,
+                          counterintuitive_shift_factor)
 
 
 __author__ = "kurtosis"
@@ -31,7 +32,7 @@ class LinearKick(Linear):
 
         self.kickiness_level = kickiness_level
 
-    def kicky_beatie_factor_wrapper(self, rhythm_bitmap, multiplier=1000):
+    def kicky_beatie_factor_wrapper(self, rhythm_bitmap, multiplier=3000):
         return kicky_beatie_factor(self, rhythm_bitmap, self.kickiness_level, multiplier)
 
     def sampling_probability(self, rhythm_bitmap):
@@ -70,26 +71,32 @@ class LinearClave(Linear):
                                      log=log, log_level=log_level,
                                      log_name=log_name)
 
-    def if_euclidean_factor_wrapper(self, rhythm_bitmap, multiplier=200):
+    def if_euclidean_factor_wrapper(self, rhythm_bitmap, multiplier=2000):
         return if_euclidean_factor(self, rhythm_bitmap, multiplier)
 
-    def one_one_one_factor_wrapper(self, rhythm_bitmap, ones=(2,3,4), multipliers=(0.01, 0.001, 0.0001)):
-        return one_one_one_factor(self, rhythm_bitmap, ones, multipliers)
+    def one_one_one_factor_wrapper(self, rhythm_bitmap, ones=(2,3,4), multipliers=(10**4, 10**5, 10**6)):
+        return one_one_one_factor(self, rhythm_bitmap, ones, multipliers, negative=True)
 
     def one_zero_zero_factor_wrapper(self, rhythm_bitmap, multiplier=50):
         return one_zero_zero_factor(self, rhythm_bitmap, multiplier)
 
+    def counterintuitive_shift_factor_wrapper(self, rhythm_bitmap, gap=10, penalty=1000):
+        return counterintuitive_shift_factor(self, rhythm_bitmap,
+                                             gap=gap, penalty=penalty)
+
     def sampling_probability(self, rhythm_bitmap):
         proba = super(LinearClave, self).sampling_probability(rhythm_bitmap)
         self.log_debug(
-            'Inheritance:euclid:%.4f\tones:%.4f\t100:%.4f\n' %
+            'Inheritance:euclid:%.4f\tones:%.4f\t100:%.4f\tcounter:%.4f\n' %
             (self.if_euclidean_factor_wrapper(rhythm_bitmap),
              self.one_one_one_factor_wrapper(rhythm_bitmap),
-             self.one_zero_zero_factor_wrapper(rhythm_bitmap))
+             self.one_zero_zero_factor_wrapper(rhythm_bitmap),
+             self.counterintuitive_shift_factor_wrapper(rhythm_bitmap))
         )
         proba *= (self.if_euclidean_factor_wrapper(rhythm_bitmap) *
                   self.one_one_one_factor_wrapper(rhythm_bitmap) *
-                  self.one_zero_zero_factor_wrapper(rhythm_bitmap))
+                  self.one_zero_zero_factor_wrapper(rhythm_bitmap) *
+                  self.counterintuitive_shift_factor_wrapper(rhythm_bitmap))
         return proba
 
 
@@ -117,18 +124,25 @@ class LinearHat(Linear):
     def if_euclidean_factor_wrapper(self, rhythm_bitmap, multiplier=0.01):
         return if_euclidean_factor(self, rhythm_bitmap, multiplier)
 
-    def one_one_one_factor_wrapper(self, rhythm_bitmap, ones=(3,4,5), multipliers=(20, 100, 150)):
+    def one_one_one_factor_wrapper(self, rhythm_bitmap, ones=(3,4,5), multipliers=(200, 500, 1000)):
         return one_one_one_factor(self, rhythm_bitmap, ones, multipliers)
+
+    def counterintuitive_shift_factor_wrapper(self, rhythm_bitmap, gap=10,
+                                              penalty=1000):
+        return counterintuitive_shift_factor(self, rhythm_bitmap,
+                                             gap=gap, penalty=penalty)
 
     def sampling_probability(self, rhythm_bitmap):
         proba = super(LinearHat, self).sampling_probability(rhythm_bitmap)
         self.log_debug(
-            'Inheritance:euclid:%.4f\tones:%.4f\n' %
+            'Inheritance:euclid:%.4f\tones:%.4f\tcounter:%.4f\n' %
             (self.if_euclidean_factor_wrapper(rhythm_bitmap),
-             self.one_one_one_factor_wrapper(rhythm_bitmap))
+             self.one_one_one_factor_wrapper(rhythm_bitmap),
+             self.counterintuitive_shift_factor_wrapper(rhythm_bitmap))
         )
         proba *= (self.if_euclidean_factor_wrapper(rhythm_bitmap) *
-                  self.one_one_one_factor_wrapper(rhythm_bitmap))
+                  self.one_one_one_factor_wrapper(rhythm_bitmap) *
+                  self.counterintuitive_shift_factor_wrapper(rhythm_bitmap))
         return proba
 
 
