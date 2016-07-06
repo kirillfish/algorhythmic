@@ -38,7 +38,7 @@ class LinearKick(Linear):
     def sampling_probability(self, rhythm_bitmap):
         proba = super(LinearKick, self).sampling_probability(rhythm_bitmap)
         self.log_debug('Inheritance:kickiness:%.6f' % self.kicky_beatie_factor_wrapper(rhythm_bitmap))
-        proba *= self.kicky_beatie_factor_wrapper(rhythm_bitmap)
+        proba *= (self.kicky_beatie_factor_wrapper(rhythm_bitmap))
         return proba
 
 
@@ -87,7 +87,7 @@ class LinearClave(Linear):
     def sampling_probability(self, rhythm_bitmap):
         proba = super(LinearClave, self).sampling_probability(rhythm_bitmap)
         self.log_debug(
-            'Inheritance:euclid:%.4f\tones:%.4f\t100:%.4f\tcounter:%.4f\n' %
+            'Inheritance:euclid:%.4f\tones:%.4f\t100:%.4f\tdullshift:%.4f\n' %
             (self.if_euclidean_factor_wrapper(rhythm_bitmap),
              self.one_one_one_factor_wrapper(rhythm_bitmap),
              self.one_zero_zero_factor_wrapper(rhythm_bitmap),
@@ -135,7 +135,7 @@ class LinearHat(Linear):
     def sampling_probability(self, rhythm_bitmap):
         proba = super(LinearHat, self).sampling_probability(rhythm_bitmap)
         self.log_debug(
-            'Inheritance:euclid:%.4f\tones:%.4f\tcounter:%.4f\n' %
+            'Inheritance:euclid:%.4f\tones:%.4f\tdullshift:%.4f\n' %
             (self.if_euclidean_factor_wrapper(rhythm_bitmap),
              self.one_one_one_factor_wrapper(rhythm_bitmap),
              self.counterintuitive_shift_factor_wrapper(rhythm_bitmap))

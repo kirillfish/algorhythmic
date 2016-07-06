@@ -54,6 +54,7 @@ class GenericFarm(object):
 
 farm_067 = GenericFarm('0.6.7', ['latin', 'percussion', 'bonga', 'clave', '120bpm', 'algorhythmic', 'dope'], 120)
 farm_082 = GenericFarm('0.8.2', ['latin', 'percussion', 'bonga', 'clave', '120bpm', 'algorhythmic'], 120)
+farm_097 = GenericFarm('0.9.7', ['latin', 'percussion', 'bonga', 'clave', '120bpm', 'algorhythmic', 'shaker', 'dope'], 120)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
@@ -111,6 +112,44 @@ farm_082.add_linear(
                  start = '010100010101000100010010',
                  volume_serendipity=0.2, angas_per_avartam=2),
     45, 32*4./3
+)
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
+farm_097.add_linear(
+    sp.LinearKick(variability=0.1, density=0.6, irregularity=.3,
+                  log='tishra_kick.log', log_level='info',
+                  log_name='linear kick tishra',
+                  start='100100101001001010010010110110101101101011011010',
+                  volume_serendipity=0.8, angas_per_avartam=2,
+                  kickiness_level=6),
+    41, 32*2./3
+)
+farm_097.add_linear(
+    sp.LinearClave(variability=0.01, density=0.2, irregularity=0.9,
+                   log='chatusra_clave.log', log_level='info',
+                   log_name='linear clave chatusra',
+                   start='00100000100000100000001000001000',
+                   volume_serendipity=0.2, angas_per_avartam=2),
+    39, 32
+)
+farm_097.add_linear(
+    sp.LinearKick(variability=0.3, density=0.3, irregularity=1.,
+                  log='chatusra_kick.log', log_level='info',
+                  log_name='linear kick chatusra',
+                  mean_volume=0.9, mean_volume_tolerance=0.3,
+                  start='11000100100100001000010010010001',
+                  volume_serendipity=0.2, angas_per_avartam=2,
+                  kickiness_level=2),
+    43, 32
+)
+farm_097.add_linear(
+    sp.LinearHat(variability=0.1, density=0.4, irregularity=1.,
+                 log='chatusra_hat.log', log_level='info',
+                 log_name='linear hat chatusra',
+                 start='00111000011001110010101101010110',
+                 volume_serendipity=0.2, angas_per_avartam=2),
+    45, 32
 )
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #

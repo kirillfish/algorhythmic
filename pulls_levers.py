@@ -59,7 +59,6 @@ def one_one_one_factor(linear, rhythm_bitmap, ones=(3,4), multipliers=(40,150), 
             continue
         inclusion_fraction = inclusion_number * num * 1. / Counter(r)['1'] / 2
         cumulative_multiplier += multipliers_dict[num] * inclusion_fraction
-    #print cumulative_multiplier
     if negative:
         return 1 if cumulative_multiplier == 0 else min(1, 1. / cumulative_multiplier)
     else:
@@ -70,6 +69,18 @@ def kicky_beatie_factor(linear, rhythm_bitmap, level=2, multiplier=100000):
     kickies = map(lambda x: x[0], filter(lambda x: x[1] >= 2**-level, linear.current_anga.strengths.items()))
     all_in_place = all([r[i]=='1' for i in kickies])
     return multiplier if all_in_place else 1
+
+def fixed_meter_factor(linear, rhythm_bitmap, jati, multiplier=10000):
+    assert rhythm_bitmap.size() % jati == 0, 'The rhythm length must be divisible into jati'
+    desired_onsets = np.linspace(0, rhythm_bitmap.size(), jati + 1)[:-1]
+    desired_onsets = [int(rhythm_bitmap.size() - 1 - i) for i in desired_onsets]
+    all_desired_onsets_present = all([rhythm_bitmap.test(i) for i in desired_onsets])
+    return multiplier if all_desired_onsets_present else 1
+
+def pattern_factor(linear, rhythm_bitmap, pattern_bitmap, multiplier=10000):
+    desired_onsets = pattern_bitmap.nonzero()
+    all_desired_onsets_present = all([rhythm_bitmap.test(i) for i in desired_onsets])
+    return multiplier if all_desired_onsets_present else 1
 
 def familiarity_clave_factor(linear, rhythm_bitmap):
     pass
@@ -83,7 +94,7 @@ def familiarity_carnatic_factor(linear, rhythm_bitmap):
 def familiarity_flamenco_factor(linear, rhythm_bitmap):
     pass
 
-def counterintuitive_shift_factor(linear, rhythm_bitmap, gap=10, penalty=1000):
+def counterintuitive_shift_factor(linear, rhythm_bitmap, gap=25, penalty=1000):
     # TODO: consider moving this into main module
     """
     One of the basic components of rhythm complexity.

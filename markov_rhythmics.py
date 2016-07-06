@@ -191,6 +191,7 @@ class Linear(object):
                  possible_volume_bounds=(0.3, 1.),
                  volume_serendipity=0.5, volume_serendipity_tolerance=0.3,
                  mean_volume=None, mean_volume_tolerance=0.1,
+                 fast_volume_tuning=True,
                  start='0100100100010010',
                  angas_per_avartam = 4,
                  log=None, log_level='debug', log_name='Linear Logger'):
@@ -220,6 +221,7 @@ class Linear(object):
                                         serendipity_tolerance=volume_serendipity_tolerance,
                                         possible_volume_bounds=possible_volume_bounds,
                                         logger=self.logger)
+        self.fast_volume_tuning = fast_volume_tuning
 
         self.log_info("poisson lambda for variability: %s" % self.poisson_lambda)
 
@@ -374,6 +376,18 @@ class Linear(object):
         sorted_irrs = OrderedDict(sorted(irrs.items(), key=lambda x: x[1]))
         return sorted_irrs
 
+    def test_nonzero_probas(self, adj_probas):
+        nonzero_probas_num = len(adj_probas[adj_probas > 0])
+        assert nonzero_probas_num > 1, "All probas are exactly zero except %d" % nonzero_probas_num
+        adj_probas = sorted(adj_probas)
+        max_proba = max(adj_probas)
+        if adj_probas[-4] <= max_proba * 0.05 or sum(
+                adj_probas[-1:]) > 0.5 or sum(adj_probas[-3:]) > 0.95:
+            self.log_error("Very few non-negligible probas!")
+        elif adj_probas[-8] <= max_proba * 0.05 or sum(
+                adj_probas[-3:]) > 0.5 or sum(adj_probas[-8:]) > 0.95:
+            self.log_warning("Few non-negligible probas!")
+
     def make_elementary_step(self):
         self.log_info("making elementary step")
         adjacent = list(self.current_anga.find_adjacent(admissible_steps=self.shift_steps))
@@ -386,6 +400,7 @@ class Linear(object):
         for rhythm_bitmap in adjacent:
             adj_probas.append(self.sampling_probability(rhythm_bitmap))
         adj_probas = np.array(adj_probas) / sum(adj_probas)
+        self.test_nonzero_probas(adj_probas)
 
         choice = np.random.multinomial(1, adj_probas, size=1)
         choice_index = choice.nonzero()[1]
@@ -413,7 +428,10 @@ class Linear(object):
 
         self.log_info("volume tuning ...")
         self.volume_tuner.current_anga = self.current_anga # TODO: make it nicer
-        self.volume_tuner.tune_volume_batch()
+        if self.fast_volume_tuning:
+            self.volume_tuner.tune_volume_fast()
+        else:
+            self.volume_tuner.tune_volume_batch()
         self.current_anga = self.volume_tuner.current_anga
         return self.construct_avartam()
 
@@ -486,7 +504,11 @@ class VolumeTuner(object):
                  mean_volume=None, mean_volume_tolerance=0.05,
                  logger=None):
         """
-        Here should be arguments that make sense whatever the handles you are going to use. 
+        Here should be arguments that make sense whatever the handles you are going to use.
+        :param serendipity: npvi quantile (for slow optimization)
+        :param serendipity_tolerance: (for slow optimization)
+        :param mean_volume: for both fast and slow
+        :param mean_volume_tolerance: for both fast and slow (but the meaning is different)
         """
         self.logger = logger
         self.current_anga = initial_anga
@@ -587,26 +609,25 @@ class VolumeTuner(object):
         return -(self.volume_serendipity_factor(rvm)
                  * self.volume_irregularity_factor(rvm, self.current_anga.r_bitmap.size()))
 
-    def tune_volume(self):
-        """
-        DEPRECATED
-        """
-        stroke_order = list(self.current_anga.notes_to_update_in_maps)
-        shuffle(stroke_order)
-        print "initial volumes: ", self.current_anga.r_volume
-        print "new notes (to be updated): ", self.current_anga.notes_to_update_in_maps
-        print "stroke_order: ", stroke_order
-        for i in range(1):
-            for stroke in stroke_order:
-                x0 = self.mean_volume 
-                print "initial value for stroke %s: %s" % (stroke, x0)
-                bounds = (0.3, 1)
-                objective = partial(self.goodness_volume_function, update_index=stroke)
-                optimal_volume = minimize_scalar(objective, method='bounded', bounds=bounds)
-                print "optimized: ", optimal_volume.x
-                self.current_anga.r_volume.update({stroke: optimal_volume.x})
-                print "so, now we have volumes: ", self.current_anga.r_volume
-            print "final volumes: ", self.current_anga.r_volume
+    def tune_volume_fast(self):
+        update_indices = list(self.current_anga.notes_to_update_in_maps)
+        self.log_debug("update_indices for volume: %s" % update_indices)
+        if len(update_indices) == 0:
+            return {}
+        optimal_volumes = {}
+        for ix in update_indices:
+            optimal_volumes[ix] = max(self.possible_volume_bounds[0],
+                                      min(self.possible_volume_bounds[1],
+                                          stats.norm.rvs(
+                                              self.mean_volume,
+                                              self.mean_volume_tolerance, size=1)[0]
+                                          )
+                                      )
+        self.current_anga.r_volume.update(optimal_volumes)
+
+        self.log_info("optimal volumes: %s" % optimal_volumes)
+        self.log_info("all volumes including modified ones: %s" % self.current_anga.r_volume)
+        return optimal_volumes
 
     def tune_volume_batch(self):
         """
