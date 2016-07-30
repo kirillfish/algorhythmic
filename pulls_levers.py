@@ -25,11 +25,13 @@ def _find_euclidean_rhythm(for_one='1', for_zero='0', ones=5, zeros=15, last=Fal
                       ones=counts.values()[0], zeros=counts.values()[1],
                                  last=last)
 
+
 def _shifted_family(r):
     family = set()
     for pos in xrange(len(r)):
         family.add(r[pos:] + r[:pos])
     return family
+
 
 def if_euclidean_factor(linear, rhythm_bitmap, multiplier=50):
     r = rhythm_bitmap.tostring()
@@ -42,11 +44,13 @@ def if_euclidean_factor(linear, rhythm_bitmap, multiplier=50):
     )
     return multiplier if r in euclidean_family else 1
 
+
 def one_zero_zero_factor(linear, rhythm_bitmap, multiplier=100):
     pattern = '1001001001'
     stretched = '0'.join(pattern)
     r = rhythm_bitmap.tostring() * 2
     return multiplier if pattern in r or stretched in r else 1
+
 
 def one_one_one_factor(linear, rhythm_bitmap, ones=(3,4), multipliers=(40,150), negative=False):
     multipliers_dict = dict(zip(ones, multipliers))
@@ -64,11 +68,39 @@ def one_one_one_factor(linear, rhythm_bitmap, ones=(3,4), multipliers=(40,150), 
     else:
         return max(1, cumulative_multiplier)
 
+
+def subpattern_factor(linear, rhythm_bitmap, subpatterns, multipliers, negative=False):
+    """
+    For the specific substring that should (or shouldn't) be found in an anga
+    """
+    multipliers_dict = dict(zip(subpatterns, multipliers))
+    r = rhythm_bitmap.tostring() * 2
+    cumulative_multiplier = 0
+    for subpattern in sorted(subpatterns, reverse=True):
+        compiled = re.compile(subpattern)
+        inclusion_number = len(compiled.findall(r))
+        cumulative_multiplier += multipliers_dict[subpattern] * inclusion_number * 0.5
+    if negative:
+        return 1 if cumulative_multiplier == 0 else min(1, 1. / cumulative_multiplier**2)
+    else:
+        return max(1, cumulative_multiplier)
+
+
+def pattern_factor(linear, rhythm_bitmap, pattern_bitmap, multiplier=10000):
+    """
+    For the rhythm matching as a whole
+    """
+    desired_onsets = pattern_bitmap.nonzero()
+    all_desired_onsets_present = all([rhythm_bitmap.test(i) for i in desired_onsets])
+    return multiplier if all_desired_onsets_present else 1
+
+
 def kicky_beatie_factor(linear, rhythm_bitmap, level=2, multiplier=100000):
     r = rhythm_bitmap.tostring()
     kickies = map(lambda x: x[0], filter(lambda x: x[1] >= 2**-level, linear.current_anga.strengths.items()))
     all_in_place = all([r[i]=='1' for i in kickies])
     return multiplier if all_in_place else 1
+
 
 def fixed_meter_factor(linear, rhythm_bitmap, jati, multiplier=10000):
     assert rhythm_bitmap.size() % jati == 0, 'The rhythm length must be divisible into jati'
@@ -77,24 +109,24 @@ def fixed_meter_factor(linear, rhythm_bitmap, jati, multiplier=10000):
     all_desired_onsets_present = all([rhythm_bitmap.test(i) for i in desired_onsets])
     return multiplier if all_desired_onsets_present else 1
 
-def pattern_factor(linear, rhythm_bitmap, pattern_bitmap, multiplier=10000):
-    desired_onsets = pattern_bitmap.nonzero()
-    all_desired_onsets_present = all([rhythm_bitmap.test(i) for i in desired_onsets])
-    return multiplier if all_desired_onsets_present else 1
 
 def familiarity_clave_factor(linear, rhythm_bitmap):
     pass
 
+
 def familiarity_arab_factor(linear, rhythm_bitmap):
     pass
+
 
 def familiarity_carnatic_factor(linear, rhythm_bitmap):
     pass
 
+
 def familiarity_flamenco_factor(linear, rhythm_bitmap):
     pass
 
-def counterintuitive_shift_factor(linear, rhythm_bitmap, gap=25, penalty=1000):
+
+def counterintuitive_shift_factor(linear, rhythm_bitmap, gap=10, penalty=1000):
     # TODO: consider moving this into main module
     """
     One of the basic components of rhythm complexity.
@@ -112,3 +144,41 @@ def counterintuitive_shift_factor(linear, rhythm_bitmap, gap=25, penalty=1000):
     #return [linear.rhythm_irregularity(BitMap.fromstring(r)) for r in shifts], irregularity_as_is
     # TODO include also promotion of the most irregular rhythms among all the shifts if the minimum irreg shift is not too dull.
     return 1./penalty if irregularity_as_is > min_shifted_irregularity * gap else 1
+
+
+# ~*~*~*~*~*~*~*~*~*~*~*~*~*~*~* Multilinear Pulls and Levers ~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~*~
+
+def _compute_jaccard_overlap(multilinear_linear, rhythm_bitmap):
+    onsets = set(rhythm_bitmap.nonzero())
+    other_onsets = [set(linear.current_anga.r_bitmap.nonzero()) for linear in
+                    multilinear_linear.multilinear_members_with_more_priority]
+    onsets_jaccard_sum = sum(
+        [len(onsets.intersection(o)) * 1. / len(onsets.union(o)) for o in
+         other_onsets])
+    return onsets_jaccard_sum
+
+def multi_no_overlap_factor(multilinear_linear, rhythm_bitmap, hard, penalty):
+    #print hard, penalty
+    onsets_jaccard_sum = _compute_jaccard_overlap(multilinear_linear, rhythm_bitmap)
+    onsets_jaccard_sum_current = _compute_jaccard_overlap(multilinear_linear, multilinear_linear.current_anga.r_bitmap)
+
+    #for linear in multilinear_linear.multilinear_members_with_more_priority:
+    #    print linear.current_anga.r
+    #print rhythm_bitmap.tostring(), '<---', onsets_jaccard_sum, onsets_jaccard_sum_current
+    ####overlapping_onsets_fraction, 1. / (1 + overlapping_onsets_fraction * penalty)
+    #print '\n'
+
+    if onsets_jaccard_sum < onsets_jaccard_sum_current or onsets_jaccard_sum == 0:
+        multiplier = 1.
+    elif hard:
+        multiplier = 0
+    else:
+        multiplier = 1. / penalty
+    multilinear_linear.log_debug(
+        "Jaccard overlap. candidate: %.3f current: %.3f result: %.4f"
+                                 % (onsets_jaccard_sum,
+                                    onsets_jaccard_sum_current,
+                                    multiplier)
+    )
+    return multiplier
+

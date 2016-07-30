@@ -4,13 +4,14 @@ from copy import deepcopy
 import numpy as np
 from scipy import stats
 from scipy.optimize import *
-from random import shuffle
+from random import shuffle, random
 from functools import partial
 from collections import OrderedDict, defaultdict, Counter
 from itertools import izip
 from tqdm import tqdm
 import logging
 import midi
+import types
 
 import sys
 sys.path.insert(1, '/Users/k.rybachuk/rhythm/midiutil/src/')
@@ -34,7 +35,6 @@ def if_logger(func):
             return func(self, msg)
     return func_wrapper
 
-print if_logger
 
 def if_log(func):
     def func_wrapper(self, *args, **kwargs):
@@ -211,8 +211,8 @@ class Linear(object):
 
         self.poisson_lambda = self._convert_variability(variability)        # for variability
 
-        self.triang_loc = density - 0.1     # for density
-        self.triang_scale = 0.2
+        self.triang_loc = density - 0.15     # for density
+        self.triang_scale = 0.3
 
         self.density = density
         self.volume_tuner = VolumeTuner(self.current_anga,
@@ -227,6 +227,8 @@ class Linear(object):
 
         self.irregularity = irregularity
         self.sorted_irrs = None
+
+        self.multilinear_members_with_more_priority = []
 
     @if_logger
     def log_debug(self, msg):
@@ -348,12 +350,15 @@ class Linear(object):
 
     def density_factor(self, rhythm_bitmap):
         rhythm_density = len(rhythm_bitmap.nonzero()) * 1. / rhythm_bitmap.size()
-        #proba = stats.beta.pdf(rhythm_density, self.alpha_shape, self.beta_shape)
-        proba = stats.triang.pdf(rhythm_density, 0.5, loc=self.triang_loc, scale=self.triang_scale)
+        proba = stats.triang.pdf(rhythm_density, 0.5, loc=self.triang_loc, scale=self.triang_scale) ** 2
         return proba
 
     def debug_factor(self, rhythm_bitmap):
         return float(len(rhythm_bitmap.nonzero()) > 0) * float(rhythm_bitmap.tostring() != self.previous_anga.r)
+
+    def multilinear_dependencies_factor(self, rhythm_bitmap):
+        # generic
+        return 1.
 
     def sampling_probability(self, rhythm_bitmap):
         """
@@ -363,12 +368,19 @@ class Linear(object):
                  (i.e. is just a product of distributions)
         """
         proba = (self.irregularity_factor(rhythm_bitmap)
-                 * self.density_factor(rhythm_bitmap) ** 2
-                 * self.debug_factor(rhythm_bitmap))
-        self.log_debug("%s:\tirreg:%.6f\tdens:%.6f\tsampling probability:%.4f" % (rhythm_bitmap.tostring(),
+                 * self.density_factor(rhythm_bitmap)
+                 * self.debug_factor(rhythm_bitmap)
+                 * self.multilinear_dependencies_factor(rhythm_bitmap))
+        self.log_debug("%s:\tirreg:%.6f\tdens:%.6f\tmulti:%.6f\tsampling probability:%.4f" % (rhythm_bitmap.tostring(),
                                            self.irregularity_factor(rhythm_bitmap),
                                            self.density_factor(rhythm_bitmap),
+                                           self.multilinear_dependencies_factor(rhythm_bitmap),
                                            proba))
+        #print "%s:\tirreg:%.6f\tdens:%.6f\tmulti:%.6f\tsampling probability:%.4f" % (rhythm_bitmap.tostring(),
+        #                                   self.irregularity_factor(rhythm_bitmap),
+        #                                   self.density_factor(rhythm_bitmap),
+        #                                   self.multilinear_dependencies_factor(rhythm_bitmap),
+        #                                   proba)
         return proba
 
     def _rank_by_irregularity(self, adjacent):
@@ -378,15 +390,17 @@ class Linear(object):
 
     def test_nonzero_probas(self, adj_probas):
         nonzero_probas_num = len(adj_probas[adj_probas > 0])
-        assert nonzero_probas_num > 1, "All probas are exactly zero except %d" % nonzero_probas_num
+        assert nonzero_probas_num > 0, "All probas are exactly zero except %d" % nonzero_probas_num
         adj_probas = sorted(adj_probas)
         max_proba = max(adj_probas)
         if adj_probas[-4] <= max_proba * 0.05 or sum(
                 adj_probas[-1:]) > 0.5 or sum(adj_probas[-3:]) > 0.95:
-            self.log_error("Very few non-negligible probas!")
+            self.log_error("Very few non-negligible probas:\n%s"
+                           % '\n'.join(['%.4f' % proba for proba in adj_probas[-5:][::-1]]))
         elif adj_probas[-8] <= max_proba * 0.05 or sum(
                 adj_probas[-3:]) > 0.5 or sum(adj_probas[-8:]) > 0.95:
-            self.log_warning("Few non-negligible probas!")
+            self.log_warning("Few non-negligible probas:\n%s"
+                             % '\n'.join(['%.4f' % proba for proba in adj_probas[-5:][::-1]]))
 
     def make_elementary_step(self):
         self.log_info("making elementary step")
@@ -496,6 +510,45 @@ class Linear(object):
         passed = sum(tests16) + sum(tests16_twice) + sum(tests16_stretch)
         total = len(tests16) + len(tests16_twice) + len(tests16_stretch)
         self.log_info("TESTS PASSED: %s/%s" % (passed, total))
+
+
+class MultilinearGeneric(object):
+    """
+    This class is not intended to be used as is, since there are no
+    control parameters in it by default. One should inherit from this generic
+    class, each time specifying parameters he wants to include. Initializing
+    the generic class will throw NotImplementedError
+    """
+    def __init__(self, *ordered_linears, **kwargs):
+        self.linears = ordered_linears
+        sizes = [linear.current_anga.r_bitmap.size() for linear in self.linears]
+        # TODO: consider relaxing this condition:
+        assert len(set(sizes)) == 1, "All linears' angas must have the same length"
+        self.kwargs = kwargs
+        self._distribute_dependencies()
+
+    def _distribute_dependencies(self):
+        for i, linear in enumerate(self.linears):
+            print len(self.linears)
+            more_priority = list(self.linears)
+            more_priority.remove(linear)
+            #more_priority = self.linears[:i]
+            linear.multilinear_dependencies_factor = types.MethodType(self.__class__.__dict__['all_dependencies'], linear)
+            linear.multilinear_members_with_more_priority = more_priority
+            for kwarg in self.kwargs:
+                #print kwarg
+                linear.__setattr__(kwarg, self.kwargs[kwarg])
+            print more_priority
+
+    def all_dependencies(self, rhythm_bitmap):
+        raise NotImplementedError
+
+    def make_variation(self):
+        avartams = []
+        for linear in self.linears:
+            avartams.append(linear.make_variation())
+        return avartams
+
 
 class VolumeTuner(object):
 
@@ -720,27 +773,33 @@ class MidiWriter(object):
     Each channel (=Linear) corresponds to a single instrument
     """
 
-    def __init__(self, bpm, track=0, track_name="Phunkie"):
+    def __init__(self, bpm, track=0, track_name="Phunkie", microtiming_magnitude=0):
         self.bpm = bpm
         self.track=track
         self.midi = MIDIFile(1)
         self.midi.addTrackName(self.track, 0, track_name)
         self.midi.addTempo(self.track, 0, self.bpm)
         self.ticks_total = Counter()
+        assert microtiming_magnitude > 0 and microtiming_magnitude < 0.25, "Microtiming magnitude should be inside [0, 0.25]"
+        self.microtiming_magnitude = microtiming_magnitude
 
     def add_avartam(self, avartam, pitch, channel=0, ticks_per_nadai=32):
         # TODO: work out duration
 
-        for key in sorted(avartam.r_volume.keys())[:-2]:
-            time = (key * ticks_per_nadai + self.ticks_total[pitch]) / 128.
+        hacked_divisor = 128.
+        for key in sorted(avartam.r_volume.keys())[:-1]:
+            time = (
+                       (key + stats.norm.rvs(loc=0, scale=self.microtiming_magnitude)
+                        ) * ticks_per_nadai + self.ticks_total[pitch]
+                   ) / hacked_divisor
             duration = 1
             self.midi.addNote(self.track, channel, pitch, time, duration, volume=avartam.r_volume[key]*127)
 
-        for key in sorted(avartam.r_volume.keys())[-2:]:
-            last_possible_tick = ((len(avartam.r)) * ticks_per_nadai) / 128.
-            time = (key * ticks_per_nadai + self.ticks_total[pitch]) / 128.
-            if (key+8) * ticks_per_nadai / 128. > last_possible_tick:
-                duration = last_possible_tick - (key * ticks_per_nadai-8) / 128.
+        for key in sorted(avartam.r_volume.keys())[-1:]:
+            last_possible_tick = ((len(avartam.r)) * ticks_per_nadai) / hacked_divisor
+            time = (key * ticks_per_nadai + self.ticks_total[pitch]) / hacked_divisor
+            if ((key+1) * ticks_per_nadai + self.ticks_total[pitch]) / hacked_divisor >= last_possible_tick:
+                duration = last_possible_tick - (key * ticks_per_nadai-4) / hacked_divisor
             else:
                 duration = 1
 

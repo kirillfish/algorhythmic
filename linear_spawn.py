@@ -1,10 +1,14 @@
 #coding: utf-8
-from markov_rhythmics import Linear
+from markov_rhythmics import Linear, MultilinearGeneric
 from pulls_levers import (if_euclidean_factor,
                           one_one_one_factor,
                           one_zero_zero_factor,
                           kicky_beatie_factor,
-                          counterintuitive_shift_factor)
+                          counterintuitive_shift_factor,
+                          multi_no_overlap_factor,
+                          fixed_meter_factor,
+                          pattern_factor,
+                          subpattern_factor)
 
 
 __author__ = "kurtosis"
@@ -86,17 +90,18 @@ class LinearClave(Linear):
 
     def sampling_probability(self, rhythm_bitmap):
         proba = super(LinearClave, self).sampling_probability(rhythm_bitmap)
-        self.log_debug(
-            'Inheritance:euclid:%.4f\tones:%.4f\t100:%.4f\tdullshift:%.4f\n' %
-            (self.if_euclidean_factor_wrapper(rhythm_bitmap),
-             self.one_one_one_factor_wrapper(rhythm_bitmap),
-             self.one_zero_zero_factor_wrapper(rhythm_bitmap),
-             self.counterintuitive_shift_factor_wrapper(rhythm_bitmap))
-        )
         proba *= (self.if_euclidean_factor_wrapper(rhythm_bitmap) *
                   self.one_one_one_factor_wrapper(rhythm_bitmap) *
                   self.one_zero_zero_factor_wrapper(rhythm_bitmap) *
                   self.counterintuitive_shift_factor_wrapper(rhythm_bitmap))
+        self.log_debug(
+            'Inheritance:euclid:%.4f\tones:%.4f\t100:%.4f\tdullshift:%.4f\tfinal proba: %.6f\n' %
+            (self.if_euclidean_factor_wrapper(rhythm_bitmap),
+             self.one_one_one_factor_wrapper(rhythm_bitmap),
+             self.one_zero_zero_factor_wrapper(rhythm_bitmap),
+             self.counterintuitive_shift_factor_wrapper(rhythm_bitmap),
+             proba)
+        )
         return proba
 
 
@@ -107,7 +112,7 @@ class LinearHat(Linear):
                  volume_serendipity_tolerance=0.3, mean_volume=None,
                  mean_volume_tolerance=0.1, start='0100100100010010',
                  angas_per_avartam=4, log=None, log_level='debug',
-                 log_name='Linear Hat'):
+                 log_name='Linear Hat', open=False):
 
         super(LinearHat, self).__init__(variability=variability, density=density,
                                      irregularity=irregularity,
@@ -121,11 +126,16 @@ class LinearHat(Linear):
                                      log=log, log_level=log_level,
                                      log_name=log_name)
 
+        self.open = open
+
     def if_euclidean_factor_wrapper(self, rhythm_bitmap, multiplier=0.01):
         return if_euclidean_factor(self, rhythm_bitmap, multiplier)
 
-    def one_one_one_factor_wrapper(self, rhythm_bitmap, ones=(3,4,5), multipliers=(200, 500, 1000)):
+    def one_one_one_factor_wrapper(self, rhythm_bitmap, ones=(3,4,5,6), multipliers=(200, 500, 1000, 1000)):
         return one_one_one_factor(self, rhythm_bitmap, ones, multipliers)
+
+    def subpattern_factor_wrapper(self, rhythm_bitmap, subpatterns=('010',), multipliers=(10.**2,)):
+        return subpattern_factor(self, rhythm_bitmap, subpatterns=subpatterns, multipliers=multipliers, negative=True)
 
     def counterintuitive_shift_factor_wrapper(self, rhythm_bitmap, gap=10,
                                               penalty=1000):
@@ -134,29 +144,45 @@ class LinearHat(Linear):
 
     def sampling_probability(self, rhythm_bitmap):
         proba = super(LinearHat, self).sampling_probability(rhythm_bitmap)
-        self.log_debug(
-            'Inheritance:euclid:%.4f\tones:%.4f\tdullshift:%.4f\n' %
-            (self.if_euclidean_factor_wrapper(rhythm_bitmap),
-             self.one_one_one_factor_wrapper(rhythm_bitmap),
-             self.counterintuitive_shift_factor_wrapper(rhythm_bitmap))
-        )
         proba *= (self.if_euclidean_factor_wrapper(rhythm_bitmap) *
                   self.one_one_one_factor_wrapper(rhythm_bitmap) *
                   self.counterintuitive_shift_factor_wrapper(rhythm_bitmap))
+        if not self.open:
+            proba *= self.subpattern_factor_wrapper(rhythm_bitmap)
+
+        to_log = ('Inheritance:euclid:%.4f\tones:%.4f\tdullshift:%.4f' %
+                  (self.if_euclidean_factor_wrapper(rhythm_bitmap),
+                   self.one_one_one_factor_wrapper(rhythm_bitmap),
+                   self.counterintuitive_shift_factor_wrapper(rhythm_bitmap)))
+        if not self.open:
+            to_log += '\t010:%.6f' % self.subpattern_factor_wrapper(
+                rhythm_bitmap)
+        to_log += '\tfinal proba:%.6f\n' % proba
+        self.log_debug(to_log)
         return proba
 
 
-class Multilinear(Linear):
+class MultilinearPhunk(MultilinearGeneric):
+
+    def __init__(self, *ordered_linears, **kwargs):
+        self.kwargs = kwargs
+        kwargs['overlap_penalty'] = kwargs.get('overlap_penalty', 10000)
+        kwargs['hard'] = kwargs.get('hard', False)
+        super(MultilinearPhunk, self).__init__(*ordered_linears, **kwargs)
+        #self.overlap_penalty = kwargs.get('overlap_penalty', 10000)
+        #self.hard = kwargs.get('hard', False)
+
+    # noinspection PyUnresolvedReferences
+    def all_dependencies(self, rhythm_bitmap):
+        return multi_no_overlap_factor(self,
+                                       rhythm_bitmap,
+                                       penalty=self.overlap_penalty,
+                                       hard=self.hard)
+
+
+class MultilinearCarnatic(MultilinearGeneric):
     pass
 
 
-class MultilinearPhunk(Multilinear):
-    pass
-
-
-class MultilinearCarnatic(Multilinear):
-    pass
-
-
-class MultilinearClave(Multilinear):
+class MultilinearClave(MultilinearGeneric):
     pass
