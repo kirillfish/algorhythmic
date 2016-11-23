@@ -1,0 +1,2 @@
+# algorhythmic
+Algorithmic rhythmic improviser
