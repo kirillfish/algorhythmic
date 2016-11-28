@@ -1,7 +1,7 @@
 #coding: utf-8
 from bitmap import BitMap
 import numpy as np
-from collections import OrderedDict, defaultdict, Counter
+from collections import Counter
 from itertools import izip_longest, chain
 import re
 
@@ -95,7 +95,7 @@ def pattern_factor(linear, rhythm_bitmap, pattern_bitmap, multiplier=10000):
     return multiplier if all_desired_onsets_present else 1
 
 
-def kicky_beatie_factor(linear, rhythm_bitmap, level=2, multiplier=100000):
+def kicky_beat_factor(linear, rhythm_bitmap, level=2, multiplier=100000):
     r = rhythm_bitmap.tostring()
     kickies = map(lambda x: x[0], filter(lambda x: x[1] >= 2**-level, linear.current_anga.strengths.items()))
     all_in_place = all([r[i]=='1' for i in kickies])
@@ -141,7 +141,6 @@ def counterintuitive_shift_factor(linear, rhythm_bitmap, gap=10, penalty=1000):
     shifts = _shifted_family(rhythm_bitmap.tostring())
     irregularity_as_is = linear.rhythm_irregularity(rhythm_bitmap)
     min_shifted_irregularity = min([linear.rhythm_irregularity(BitMap.fromstring(r)) for r in shifts])
-    #return [linear.rhythm_irregularity(BitMap.fromstring(r)) for r in shifts], irregularity_as_is
     # TODO also include a promotion of the most irregular rhythms among all the shifts if the minimum irreg shift is not too dull.
     return 1./penalty if irregularity_as_is > min_shifted_irregularity * gap else 1
 
@@ -158,15 +157,8 @@ def _compute_jaccard_overlap(multilinear_linear, rhythm_bitmap):
     return onsets_jaccard_sum
 
 def multi_no_overlap_factor(multilinear_linear, rhythm_bitmap, hard, penalty):
-    #print hard, penalty
     onsets_jaccard_sum = _compute_jaccard_overlap(multilinear_linear, rhythm_bitmap)
     onsets_jaccard_sum_current = _compute_jaccard_overlap(multilinear_linear, multilinear_linear.current_anga.r_bitmap)
-
-    #for linear in multilinear_linear.multilinear_members_with_more_priority:
-    #    print linear.current_anga.r
-    #print rhythm_bitmap.tostring(), '<---', onsets_jaccard_sum, onsets_jaccard_sum_current
-    ####overlapping_onsets_fraction, 1. / (1 + overlapping_onsets_fraction * penalty)
-    #print '\n'
 
     if onsets_jaccard_sum < onsets_jaccard_sum_current or onsets_jaccard_sum == 0:
         multiplier = 1.
@@ -181,4 +173,3 @@ def multi_no_overlap_factor(multilinear_linear, rhythm_bitmap, hard, penalty):
                                     multiplier)
     )
     return multiplier
-

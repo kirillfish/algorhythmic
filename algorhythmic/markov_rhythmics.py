@@ -14,7 +14,6 @@ import midi
 import types
 
 import sys
-sys.path.insert(1, '/Users/k.rybachuk/rhythm/midiutil/src/')
 
 from midiutil.MidiFile import MIDIFile
 
@@ -70,7 +69,8 @@ class Anga(object):
             self.jati = jati
         else:
             self.pulse = len(r)
-            assert self.pulse % JATI_TERMS[gati] == 0, "the rhythm's length is not divisible by gati"
+            assert (self.pulse % JATI_TERMS[gati] == 0,
+                    "the rhythm's length is not divisible by gati")
             self.jati = self.pulse / JATI_TERMS[gati]
         self.r = r
         self.r_bitmap = BitMap.fromstring(self.r)
@@ -84,7 +84,6 @@ class Anga(object):
             self.r_volume = r_volume
 
         self.notes_to_update_in_maps = self.nonzero.difference(set(self.r_volume.keys()))
-        #print self.notes_to_update_in_maps
         self.notes_to_delete_from_maps = set(self.r_volume.keys()).difference(self.nonzero)
         for pos in self.notes_to_delete_from_maps:
             del self.r_volume[pos]
@@ -153,7 +152,8 @@ class Anga(object):
         self.log_debug("shifted adjacent: %s" % len(shifted))
 
         adjacent = flipped.union(shifted)
-        self.log_debug("shifted+flipped and the total adjacent: %s, %s" % (len(shifted) + len(flipped), len(adjacent)))
+        self.log_debug("shifted+flipped and the total adjacent: %s, %s" %
+                       (len(shifted) + len(flipped), len(adjacent)))
         return adjacent
 
 
@@ -194,7 +194,8 @@ class Linear(object):
                  fast_volume_tuning=True,
                  start='0100100100010010',
                  angas_per_avartam = 4,
-                 log=None, log_level='debug', log_name='Linear Logger'):
+                 log=None, log_level='debug', log_name='Linear Logger',
+                 store_proba_history=False):
         self.logger=None
         self.log = log
         if self.log is not None:
@@ -209,14 +210,15 @@ class Linear(object):
         self.angas_per_avartam = angas_per_avartam
         self.current_avartam = self.construct_avartam()
 
-        self.poisson_lambda = self._convert_variability(variability)        # for variability
+        self.poisson_lambda = self._convert_variability(variability)  # for variability
 
-        self.triang_loc = density - 0.15     # for density
+        self.triang_loc = density - 0.15  # for density
         self.triang_scale = 0.3
 
         self.density = density
         self.volume_tuner = VolumeTuner(self.current_anga,
-                                        mean_volume=mean_volume, mean_volume_tolerance=mean_volume_tolerance,
+                                        mean_volume=mean_volume,
+                                        mean_volume_tolerance=mean_volume_tolerance,
                                         serendipity=volume_serendipity,
                                         serendipity_tolerance=volume_serendipity_tolerance,
                                         possible_volume_bounds=possible_volume_bounds,
@@ -229,6 +231,10 @@ class Linear(object):
         self.sorted_irrs = None
 
         self.multilinear_members_with_more_priority = []
+
+        self.store_proba_history = store_proba_history
+        if store_proba_history:
+            self.proba_history=[]
 
     @if_logger
     def log_debug(self, msg):
@@ -325,11 +331,9 @@ class Linear(object):
         def irr(pos_plusminus, attr):
             return strengths[pos_plusminus]**1.5 * 1./(strength_i)**3 / attr
 
-        where = 'minus'
         if attraction_minus > attraction_plus:
             irregularity = irr(pos_minus, attraction_minus)
         elif attraction_minus < attraction_plus:
-            where='plus'
             irregularity = irr(pos_plus, attraction_plus)
         else:
             irregularity = max(irr(pos_minus, attraction_minus),
@@ -338,9 +342,9 @@ class Linear(object):
 
     def rhythm_irregularity(self, rhythm_bitmap):
         irr = 1
-        for pos in [rhythm_bitmap.size()-1-ix for ix in rhythm_bitmap.nonzero()]: #xrange(rhythm_bitmap.size()):
+        for pos in [rhythm_bitmap.size()-1-ix for ix in rhythm_bitmap.nonzero()]:
             irr += self.note_irregularity(rhythm_bitmap, pos)
-        irr *= (len(rhythm_bitmap.nonzero())**0.2/rhythm_bitmap.size()**1.2) # previously: 0.4 and 2
+        irr *= (len(rhythm_bitmap.nonzero())**0.2/rhythm_bitmap.size()**1.2)
         return irr
 
     def irregularity_factor(self, rhythm_bitmap):
@@ -354,7 +358,10 @@ class Linear(object):
         return proba
 
     def debug_factor(self, rhythm_bitmap):
-        return float(len(rhythm_bitmap.nonzero()) > 0) * float(rhythm_bitmap.tostring() != self.previous_anga.r)
+        return float(len(rhythm_bitmap.nonzero()) > 0)
+
+    def second_order_factor(self, rhythm_bitmap):
+        return float(rhythm_bitmap.tostring() != self.previous_anga.r)
 
     def multilinear_dependencies_factor(self, rhythm_bitmap):
         # generic
@@ -371,20 +378,21 @@ class Linear(object):
                  * self.density_factor(rhythm_bitmap)
                  * self.debug_factor(rhythm_bitmap)
                  * self.multilinear_dependencies_factor(rhythm_bitmap))
-        self.log_debug("%s:\tirreg:%.6f\tdens:%.6f\tmulti:%.6f\tsampling probability:%.4f" % (rhythm_bitmap.tostring(),
-                                           self.irregularity_factor(rhythm_bitmap),
-                                           self.density_factor(rhythm_bitmap),
-                                           self.multilinear_dependencies_factor(rhythm_bitmap),
-                                           proba))
-        #print "%s:\tirreg:%.6f\tdens:%.6f\tmulti:%.6f\tsampling probability:%.4f" % (rhythm_bitmap.tostring(),
-        #                                   self.irregularity_factor(rhythm_bitmap),
-        #                                   self.density_factor(rhythm_bitmap),
-        #                                   self.multilinear_dependencies_factor(rhythm_bitmap),
-        #                                   proba)
+        if not self.store_proba_history:
+            proba += self.second_order_factor(rhythm_bitmap)
+
+        self.log_debug("%s:\tirreg:%.6f\tdens:%.6f\tmulti:%.6f\tunnormed sampling probability:%.4f" %
+                       (rhythm_bitmap.tostring(),
+                       self.irregularity_factor(rhythm_bitmap),
+                       self.density_factor(rhythm_bitmap),
+                       self.multilinear_dependencies_factor(rhythm_bitmap),
+                       proba)
+                      )
         return proba
 
     def _rank_by_irregularity(self, adjacent):
-        irrs = {rhythm_bitmap: self.rhythm_irregularity(rhythm_bitmap) for rhythm_bitmap in adjacent}
+        irrs = {rhythm_bitmap: self.rhythm_irregularity(rhythm_bitmap)
+                for rhythm_bitmap in adjacent}
         sorted_irrs = OrderedDict(sorted(irrs.items(), key=lambda x: x[1]))
         return sorted_irrs
 
@@ -415,6 +423,9 @@ class Linear(object):
             adj_probas.append(self.sampling_probability(rhythm_bitmap))
         adj_probas = np.array(adj_probas) / sum(adj_probas)
         self.test_nonzero_probas(adj_probas)
+
+        if self.store_proba_history:
+            self.proba_history.append((self.current_anga.r_bitmap, adjacent, adj_probas))
 
         choice = np.random.multinomial(1, adj_probas, size=1)
         choice_index = choice.nonzero()[1]
@@ -451,61 +462,54 @@ class Linear(object):
 
     def test_irregularity_common_sense(self):
         self.log_debug("Testing irregularity function for common sense...")
-        r16 = [
-        '1001001000101000',
-        '1001001000100100',
-        '0100100100010010',
-        '0100101001010010',
-        '0101001010010100',
-        '0111001110011100',
-        '1010010101001010',
-        '0101010010101010',
-        '0101001010100101',
-        '0100000000000100',
-        '0100001010000100',
-        '1000100010001000',
-        '0010001100100011',
-        '0010001000100010',
-        '0101010101010101'
-        ]
+        r16 = OrderedDict({
+        0:'1001001000101000',
+        1:'1001001000100100',
+        2:'0100100100010010',
+        3:'0100101001010010',
+        4:'0101001010010100',
+        5:'0111001110011100',
+        6:'1010010101001010',
+        7:'0101010010101010',
+        8:'0101001010100101',
+        9:'0100000000000100',
+        10:'0100001010000100',
+        11:'1000100010001000',
+        12:'0010001100100011',
+        13:'0010001000100010',
+        14:'0101010101010101'
+        })
 
-        r16_twice = [r*2 for r in r16]
-        r16_stretch = ['0'.join(r)+'0' for r in r16]
+        r16_twice = {k:v*2 for k,v in r16.items()}
+        r16_stretch = {k:'0'.join(v)+'0' for k,v in r16.items()}
 
         def irr(r):
             return self.rhythm_irregularity(BitMap.fromstring(r))
         def test_less(collection, i0, i1):
             return collection[i0] < collection[i1]
 
-        irr16 = map(irr, r16)
-        irr16_twice = map(irr, r16_twice)
-        irr16_stretch = map(irr, r16_stretch)
+        irr16 = map(irr, r16.values())
+        irr16_twice = map(irr, r16_twice.values())
+        irr16_stretch = map(irr, r16_stretch.values())
         self.log_debug("Rhythm\tIrr-as is\tIrr-taken twice\tIrr-stretch by 2")
         for i, r in enumerate(r16):
             self.log_debug('\t'.join([r, str(irr16[i]), str(irr16_twice[i]), str(irr16_stretch[i])]))
 
-        indices_less16 = [(0,1),
-                    (1,2),
-                    (1,3),
-                    (4,3),
-                    (5,3),
-                    (6,7),
-                    (7,8),
-                    (10,9),
-                    (10,8),
-                    (11,0),
-                    (12,9),
-                    (12,8),
-                    (13,14),
-                    (14,3)]
+        indices_less16 = [(0,1), (1,2), (1,3), (4,3), (5,3), (6,7), (7,8),
+                          (10,9), (10,8), (11,0), (12,9), (12,8), (13,14),
+                          (14,3)]
         tests16 = [test_less(irr16, i0, i1) for i0, i1 in indices_less16]
         tests16_twice = [test_less(irr16_twice, i0, i1) for i0, i1 in indices_less16]
         tests16_stretch = [test_less(irr16_stretch, i0, i1) for i0, i1 in indices_less16]
 
         for i, item in enumerate(indices_less16):
             self.log_debug('%s < %s\t%s' % (r16[item[0]], r16[item[1]], tests16[i]))
-            self.log_debug('%s < %s\t%s' % (r16_twice[item[0]], r16_twice[item[1]], tests16_twice[i]))
-            self.log_debug('%s < %s\t%s' % (r16_stretch[item[0]], r16_stretch[item[1]], tests16_stretch[i]))
+            self.log_debug('%s < %s\t%s' % (r16_twice[item[0]],
+                                            r16_twice[item[1]],
+                                            tests16_twice[i]))
+            self.log_debug('%s < %s\t%s' % (r16_stretch[item[0]],
+                                            r16_stretch[item[1]],
+                                            tests16_stretch[i]))
 
         passed = sum(tests16) + sum(tests16_twice) + sum(tests16_stretch)
         total = len(tests16) + len(tests16_twice) + len(tests16_stretch)
@@ -529,16 +533,16 @@ class MultilinearGeneric(object):
 
     def _distribute_dependencies(self):
         for i, linear in enumerate(self.linears):
-            print len(self.linears)
+            #print len(self.linears)
             more_priority = list(self.linears)
             more_priority.remove(linear)
-            #more_priority = self.linears[:i]
-            linear.multilinear_dependencies_factor = types.MethodType(self.__class__.__dict__['all_dependencies'], linear)
+            linear.multilinear_dependencies_factor = types.MethodType(
+                self.__class__.__dict__['all_dependencies'], linear
+            )
             linear.multilinear_members_with_more_priority = more_priority
             for kwarg in self.kwargs:
-                #print kwarg
                 linear.__setattr__(kwarg, self.kwargs[kwarg])
-            print more_priority
+            #print more_priority
 
     def all_dependencies(self, rhythm_bitmap):
         raise NotImplementedError
@@ -579,7 +583,6 @@ class VolumeTuner(object):
             min(self.mean_volume+self.mean_volume_tolerance, self.possible_volume_bounds[1])
                              )
         self.log_info("volume window for modifying volume: %s, %s" % self.volume_window)
-        #self.mean_npvi, self.std_npvi = self.simulate_npvi_distribution()
 
     @if_logger
     def log_debug(self, msg):
@@ -627,7 +630,8 @@ class VolumeTuner(object):
     def simulate_npvi_distribution(self):
         npvis = []
         means = []
-        self.log_info("notes to update in volume map: %s" % self.current_anga.notes_to_update_in_maps)
+        self.log_info("notes to update in volume map: %s" %
+                      self.current_anga.notes_to_update_in_maps)
         for _ in tqdm(xrange(10000)):
             new_volume = deepcopy(self.current_anga.r_volume)
             for key in self.current_anga.notes_to_update_in_maps:
@@ -640,8 +644,10 @@ class VolumeTuner(object):
         self.log_warning("len(npvis)=%s" % len(npvis))
         mean_npvi = np.percentile(npvis, self.serendipity*100)
         std_npvi = self.serendipity_tolerance*(np.percentile(npvis, 75) - np.percentile(npvis, 25))
-        self.log_info("mean npvi as it computed from simulations (%d percentile) is %.3f" % (self.serendipity*100, mean_npvi))
-        self.log_info("standard deviation of normal distribution for npvi as interquartile range: %.3f" % std_npvi)
+        self.log_info("mean npvi as it computed from simulations "
+                      "(%d percentile) is %.3f" % (self.serendipity*100, mean_npvi))
+        self.log_info("standard deviation of normal distribution for npvi "
+                      "as interquartile range: %.3f" % std_npvi)
         return mean_npvi, std_npvi
     
     def volume_serendipity_factor(self, rhythm_volume_map):
@@ -698,7 +704,8 @@ class VolumeTuner(object):
                             update_indices=update_indices)
         self.log_debug("optimization with basinhopping...")
         solution = basinhopping(objective, 
-                                       x0=[self.mean_volume for i in self.current_anga.notes_to_update_in_maps],
+                                       x0=[self.mean_volume
+                                           for i in self.current_anga.notes_to_update_in_maps],
                                        niter=200, niter_success=200, accept_test=mybounds)
         self.log_info("basinhopping solution: \n%s" % solution)
         for i,res in enumerate(solution['x']):
@@ -753,11 +760,9 @@ class MidiParser(object):
         template = self._construct_template(angas)
 
         for onset_tick in track:
-            #print onset_tick,
             if onset_tick % self.ticks_per_nadai != 0:
                 raise ValueError("Onset tick doesn't match nadai")
             pos = onset_tick / self.ticks_per_nadai
-            #print pos
             template.set(template.size() - 1 - pos)
         template = template.tostring()
         ticks_per_anga = len(template) / angas
@@ -780,7 +785,8 @@ class MidiWriter(object):
         self.midi.addTrackName(self.track, 0, track_name)
         self.midi.addTempo(self.track, 0, self.bpm)
         self.ticks_total = Counter()
-        assert microtiming_magnitude >= 0 and microtiming_magnitude < 0.25, "Microtiming magnitude should be inside [0, 0.25]"
+        assert (microtiming_magnitude >= 0 and microtiming_magnitude < 0.25,
+                "Microtiming magnitude should be inside [0, 0.25]")
         self.microtiming_magnitude = microtiming_magnitude
 
     def add_avartam(self, avartam, pitch, channel=0, ticks_per_nadai=32):
